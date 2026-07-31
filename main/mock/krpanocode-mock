@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# krpanocode-mock — dev stand-in for the real krpanocode PHAR.
+# Emits the same --json NDJSON contract as PLAN-UI-APP.md so the full UI can be
+# built and tested before the real --json mode lands.
+#
+# Usage (matches the real PHAR):
+#   krpanocode-mock --json --version
+#   krpanocode-mock --json --models
+#   krpanocode-mock --json --setup --key <KEY> --model <MODEL>
+#   krpanocode-mock --json -p "<prompt>" -f <folder>
+#   krpanocode-mock --json --clarify -p "<prompt>" -f <folder>
+#   krpanocode-mock --json --restore -f <folder>
+#
+# The mock:
+#   - emits events with realistic sleeps between lines
+#   - for -p: actually writes a small file in -f so the watcher + preview reload
+#     can be tested end-to-end
+#   - for --restore: restores from .mock-backup/ (created on -p)
+
+set -u
+
+# ---- arg parsing ----------------------------------------------------------
+JSON=0
+VERSION=0
+MODELS=0
+SETUP=0
+RESTORE=0
+CLARIFY=0
+PROMPT=""
+FOLDER=""
+API_KEY=""
+MODEL=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --json)     JSON=1; shift ;;
+        --version)  VERSION=1; shift ;;
+        --models)   MODELS=1; shift ;;
+        --setup)    SETUP=1; shift ;;
+        --restore)  RESTORE=1; shift ;;
+        --clarify)  CLARIFY=1; shift ;;
+        -p)         PROMPT="${2:-}"; shift 2 ;;
+        -f)         FOLDER="${2:-}"; shift 2 ;;
+        --key)      API_KEY="${2:-}"; shift 2 ;;
+        --model)    MODEL="${2:-}"; shift 2 ;;
+        *)          shift ;;
+    esac
+done
+
+emit() {
+    # emit one JSON line on stdout (NDJSON).
+    printf '%s\n' "$1"
+}
+
+sleep_ms() {
+    # sleep_ms <ms>
+    sleep "$(awk -v ms="$1" 'BEGIN{printf "%.3f", ms/1000}')"
+}
+
+# ---- handlers -------------------------------------------------------------
+
+if [ "$VERSION" -eq 1 ]; then
+    emit '{"type":"version","version":"0.4.0-mock"}'
+    exit 0
+fi
+
+if [ "$MODELS" -eq 1 ]; then
+    emit '{"type":"models","models":["glm-5.2-coding","glm-5.2-nvidia","gpt-4o"]}'
+    exit 0
+fi
+
+if [ "$SETUP" -eq 1 ]; then
+    if [ -z "$API_KEY" ] || [ -n "${API_KEY#bad*}" -a "$API_KEY" = "${API_KEY#BAD*}" ] && [ -n "$API_KEY" ]; then
+        # accept any non-empty key that doesn't start with "bad"
+        if [ -z "${API_KEY##bad*}" ] || [ -z "${API_KEY##BAD*}" ]; then
+            emit '{"type":"setup","ok":false,"error":"API key rejected (401)"}'
+            exit 1
+        fi
+        emit "{\"type\":\"setup\",\"ok\":true,\"model\":\"$MODEL\"}"
+        exit 0
+    else
+        emit '{"type":"setup","ok":false,"error":"API key rejected (401)"}'
+        exit 1
+    fi
+fi
+
+if [ "$RESTORE" -eq 1 ]; then
+    if [ -z "$FOLDER" ]; then emit '{"type":"error","message":"No folder specified."}'; exit 1; fi
+    BACKUP_DIR="$FOLDER/.mock-backup"
+    LATEST=$(ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | head -1)
+    if [ -z "$LATEST" ]; then
+        emit '{"type":"error","message":"No backup found for this tour."}'
+        exit 1
+    fi
+    FILES_RESTORED=""
+    if [ -d "$LATEST" ]; then
+        for f in "$LATEST"*; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            cp "$f" "$FOLDER/$base"
+            [ -n "$FILES_RESTORED" ] && FILES_RESTORED="$FILES_RESTORED,"
+            FILES_RESTORED="$FILES_RESTORED\"$base\""
+        done
+    fi
+    emit "{\"type\":\"restored\",\"files\":[$FILES_RESTORED],\"backup\":\"$LATEST\"}"
+    emit '{"type":"done"}'
+    exit 0
+fi
+
+# default: an edit (with or without --clarify)
+if [ -z "$FOLDER" ]; then
+    emit '{"type":"error","message":"No folder specified (-f)."}'
+    exit 1
+fi
+
+# Pick a tour name from the folder basename.
+TOUR_NAME=$(basename "$FOLDER")
+
+# Backup target file before touching it, so --restore can revert.
+BACKUP_DIR="$FOLDER/.mock-backup/$(date +%Y-%m-%d-%H%M%S)-mock"
+mkdir -p "$BACKUP_DIR"
+TOUCH_FILE="$FOLDER/.krpanocode-mock-touch"
+
+# start event
+emit "{\"type\":\"start\",\"tour\":\"$TOUR_NAME\",\"backup\":\"$BACKUP_DIR\",\"editable\":[\"tour-d.xml\",\"skin/skin.xml\",\"tour.xml\"],\"locked\":[\"blend.xml\"]}"
+sleep_ms 500
+
+if [ "$CLARIFY" -eq 1 ]; then
+    emit '{"type":"clarify","status":"clarify","question":"Which part of the tour do you want to change — scene titles, skin colors, or hotspot tooltips?"}'
+    # Block on stdin for one line.
+    read -r ANSWER < /dev/stdin
+    emit "{\"type\":\"reasoning\",\"text\":\"Got it — applying to: $ANSWER\"}"
+    sleep_ms 400
+fi
+
+emit '{"type":"reasoning","text":"Looking at tour.xml for scene title attributes..."}'
+sleep_ms 600
+
+emit '{"type":"tool","name":"read_file","file":"tour.xml","ms":412}'
+sleep_ms 500
+
+emit '{"type":"tool","name":"docsearch","query":"scene title attribute","ms":2103}'
+sleep_ms 800
+
+# Make a real change so the watcher fires. Back up the touch file first.
+if [ -f "$TOUCH_FILE" ]; then
+    cp "$TOUCH_FILE" "$BACKUP_DIR/.krpanocode-mock-touch"
+fi
+cat > "$TOUCH_FILE" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- krpanocode mock write at $(date -Iseconds) -->
+<!-- prompt: $PROMPT -->
+<krpanocode_mock_marker/>
+EOF
+
+emit "{\"type\":\"tool\",\"name\":\"write_file\",\"file\":\"tour.xml\",\"bytes\":8494}"
+sleep_ms 300
+
+# Emit a synthetic diff (the touch file is just to fire the watcher).
+emit '{"type":"diff","file":"tour.xml","hunks":[{"line":123,"context":"<scene name=\"scene_poolsideday\"","old":"title=\"Main Pool\"","new":"title=\"Swimming Pool\""}]}'
+sleep_ms 200
+
+emit '{"type":"done","ms":64300}'
+exit 0

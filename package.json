@@ -1,0 +1,67 @@
+{
+  "name": "krpanocode-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "main/index.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"electron . --dev\"",
+    "dev:vite": "vite",
+    "dev:electron": "electron . --dev",
+    "build": "vite build",
+    "package": "electron-builder",
+    "package:linux": "electron-builder --linux",
+    "package:mac": "electron-builder --mac",
+    "package:win": "electron-builder --win"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "5.2.9",
+    "chokidar": "5.0.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "lucide-react": "1.25.0",
+    "radix-ui": "1.6.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-resizable-panels": "4.12.2",
+    "shiki": "4.3.1",
+    "sonner": "2.0.7",
+    "tailwind-merge": "3.6.0",
+    "tailwindcss": "4.3.3",
+    "zustand": "5.0.14"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "concurrently": "9.2.4",
+    "electron": "42.7.0",
+    "electron-builder": "26.15.6",
+    "typescript": "7.0.2",
+    "vite": "7.3.6"
+  },
+  "build": {
+    "appId": "com.panomatics.krpanocode-studio",
+    "productName": "KRpanoCode Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "main/**"
+    ],
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "DeveloperTools"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": ["nsis"]
+    }
+  }
+}
