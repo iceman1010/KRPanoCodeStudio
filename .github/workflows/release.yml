@@ -75,7 +75,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-release
-          path: release/*.{AppImage,deb}
+          path: |
+            release/*.AppImage
+            release/*.deb
 
   # ---- macOS build ----
   macos-build:
@@ -106,8 +108,8 @@ jobs:
       - name: Build Vite
         run: npm run build
 
-      - name: Package (dmg)
-        run: npm run package:mac
+      - name: Package (dmg, x64 + arm64)
+        run: npm run package:mac -- --x64 --arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
