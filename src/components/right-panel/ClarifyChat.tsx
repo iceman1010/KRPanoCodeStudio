@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Send } from "lucide-react";
+import { Send, SkipForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { invoke } from "@/lib/electron";
 import { useAppStore } from "@/stores/appStore";
@@ -28,6 +28,21 @@ export function ClarifyChat() {
     }
   }
 
+  // Per spec: writing "skip" (or EOF) to stdin aborts the clarify round-trip
+  // and the edit is rolled back by the PHAR.
+  async function skipClarify() {
+    setSending(true);
+    try {
+      await invoke("clarify_answer", "skip");
+      setAnswer("");
+      setPhase("idle");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
   return (
     <div className="border-b bg-violet-50/50 p-3 dark:bg-violet-950/20">
       <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-violet-700 dark:text-violet-300">
@@ -47,10 +62,22 @@ export function ClarifyChat() {
           }
         }}
       />
-      <Button size="sm" onClick={submitAnswer} disabled={sending || !answer.trim()}>
-        <Send className="mr-1.5 h-3.5 w-3.5" />
-        Send answer
-      </Button>
+      <div className="flex gap-2">
+        <Button size="sm" onClick={submitAnswer} disabled={sending || !answer.trim()}>
+          <Send className="mr-1.5 h-3.5 w-3.5" />
+          Send answer
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={skipClarify}
+          disabled={sending}
+          title="Abort this edit and roll back (sends 'skip' to the PHAR)"
+        >
+          <SkipForward className="mr-1.5 h-3.5 w-3.5" />
+          Skip & cancel
+        </Button>
+      </div>
     </div>
   );
 }

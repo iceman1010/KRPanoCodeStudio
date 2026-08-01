@@ -26,24 +26,28 @@ MODELS=0
 SETUP=0
 RESTORE=0
 CLARIFY=0
+UPDATE=0
 PROMPT=""
 FOLDER=""
 API_KEY=""
 MODEL=""
+BACKUP_KEEP=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --json)     JSON=1; shift ;;
-        --version)  VERSION=1; shift ;;
-        --models)   MODELS=1; shift ;;
-        --setup)    SETUP=1; shift ;;
-        --restore)  RESTORE=1; shift ;;
-        --clarify)  CLARIFY=1; shift ;;
-        -p)         PROMPT="${2:-}"; shift 2 ;;
-        -f)         FOLDER="${2:-}"; shift 2 ;;
-        --key)      API_KEY="${2:-}"; shift 2 ;;
-        --model)    MODEL="${2:-}"; shift 2 ;;
-        *)          shift ;;
+        --json)         JSON=1; shift ;;
+        --version)      VERSION=1; shift ;;
+        --models)       MODELS=1; shift ;;
+        --setup)        SETUP=1; shift ;;
+        --restore)      RESTORE=1; shift ;;
+        --clarify)      CLARIFY=1; shift ;;
+        -u|--update)    UPDATE=1; shift ;;
+        -p)             PROMPT="${2:-}"; shift 2 ;;
+        -f)             FOLDER="${2:-}"; shift 2 ;;
+        --key)          API_KEY="${2:-}"; shift 2 ;;
+        --model)        MODEL="${2:-}"; shift 2 ;;
+        --backup-keep)  BACKUP_KEEP="${2:-}"; shift 2 ;;
+        *)              shift ;;
     esac
 done
 
@@ -60,7 +64,14 @@ sleep_ms() {
 # ---- handlers -------------------------------------------------------------
 
 if [ "$VERSION" -eq 1 ]; then
-    emit '{"type":"version","version":"0.4.0-mock"}'
+    emit '{"type":"version","version":"0.5.4-mock"}'
+    exit 0
+fi
+
+if [ "$UPDATE" -eq 1 ]; then
+    echo "Checking for updates..."
+    sleep 1
+    echo "Already up to date (v0.5.4-mock)."
     exit 0
 fi
 
@@ -70,18 +81,15 @@ if [ "$MODELS" -eq 1 ]; then
 fi
 
 if [ "$SETUP" -eq 1 ]; then
-    if [ -z "$API_KEY" ] || [ -n "${API_KEY#bad*}" -a "$API_KEY" = "${API_KEY#BAD*}" ] && [ -n "$API_KEY" ]; then
-        # accept any non-empty key that doesn't start with "bad"
-        if [ -z "${API_KEY##bad*}" ] || [ -z "${API_KEY##BAD*}" ]; then
+    # Reject keys starting with "bad"; accept everything else.
+    case "$API_KEY" in
+        bad*|BAD*)
             emit '{"type":"setup","ok":false,"error":"API key rejected (401)"}'
             exit 1
-        fi
-        emit "{\"type\":\"setup\",\"ok\":true,\"model\":\"$MODEL\"}"
-        exit 0
-    else
-        emit '{"type":"setup","ok":false,"error":"API key rejected (401)"}'
-        exit 1
-    fi
+            ;;
+    esac
+    emit "{\"type\":\"setup\",\"ok\":true,\"model\":\"$MODEL\",\"models\":[\"glm-5.2-coding\",\"glm-5.2-nvidia\",\"gpt-4o\"]}"
+    exit 0
 fi
 
 if [ "$RESTORE" -eq 1 ]; then
@@ -124,6 +132,15 @@ TOUCH_FILE="$FOLDER/.krpanocode-mock-touch"
 # start event
 emit "{\"type\":\"start\",\"tour\":\"$TOUR_NAME\",\"backup\":\"$BACKUP_DIR\",\"editable\":[\"tour-d.xml\",\"skin/skin.xml\",\"tour.xml\"],\"locked\":[\"blend.xml\"]}"
 sleep_ms 500
+
+# Rate-limit scenario: prompt containing "ratelimit" or "429" triggers a 429 error.
+case "$PROMPT" in
+    *ratelimit*|*429*|*rate_limit*)
+        RESET_AT=$(date -u -d "+10 minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+10M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2026-12-31T23:59:59Z")
+        emit "{\"type\":\"error\",\"message\":\"Rate limit reached on glm-5.2-coding. Limit resets at ${RESET_AT}.\",\"kind\":\"rate_limit\",\"model\":\"glm-5.2-coding\",\"reset_at\":\"${RESET_AT}\",\"retry_after_seconds\":600}"
+        exit 1
+        ;;
+esac
 
 if [ "$CLARIFY" -eq 1 ]; then
     emit '{"type":"clarify","status":"clarify","question":"Which part of the tour do you want to change — scene titles, skin colors, or hotspot tooltips?"}'

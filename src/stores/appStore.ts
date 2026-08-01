@@ -3,6 +3,7 @@ import type {
   ActivityEntry,
   DiffEntry,
   DiffEvent,
+  ErrorEvent,
   Phase,
   PharEvent,
 } from "@/lib/types";
@@ -32,6 +33,12 @@ interface AppState {
   clarifyQuestion: string | null;
   // --- error ---
   error: string | null;
+  // --- rate-limit (set when an error event has kind === "rate_limit") ---
+  rateLimit: {
+    model: string | null;
+    resetAt: string | null;
+    retryAfterSeconds: number | null;
+  } | null;
   // --- models ---
   models: string[];
   selectedModel: string | null;
@@ -40,6 +47,7 @@ interface AppState {
   showReasoning: boolean;
   // --- prompt box ---
   lastPrompt: string;
+  lastClarify: boolean;
 
   // --- actions ---
   setPhase: (p: Phase) => void;
@@ -48,11 +56,12 @@ interface AppState {
   clearActivity: () => void;
   clearDiffs: () => void;
   setError: (msg: string | null) => void;
+  clearRateLimit: () => void;
   setModels: (models: string[]) => void;
   setSelectedModel: (m: string | null) => void;
   setTheme: (t: "light" | "dark" | "system") => void;
   setShowReasoning: (b: boolean) => void;
-  setLastPrompt: (p: string) => void;
+  setLastPrompt: (p: string, clarify: boolean) => void;
 
   // The central event handler — dispatches any PHAR event into state changes.
   applyPharEvent: (ev: PharEvent) => void;
@@ -77,11 +86,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   diffs: [],
   clarifyQuestion: null,
   error: null,
+  rateLimit: null,
   models: [],
   selectedModel: null,
   theme: "system",
   showReasoning: false,
   lastPrompt: "",
+  lastClarify: false,
 
   setPhase: (p) => set({ phase: p }),
   openTour: (folder, previewUrl) =>
@@ -95,6 +106,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       locked: [],
       clarifyQuestion: null,
       error: null,
+      rateLimit: null,
     }),
   closeTour: () =>
     set({
@@ -107,15 +119,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       locked: [],
       clarifyQuestion: null,
       error: null,
+      rateLimit: null,
     }),
   clearActivity: () => set({ activity: [] }),
   clearDiffs: () => set({ diffs: [] }),
   setError: (msg) => set({ error: msg }),
+  clearRateLimit: () => set({ rateLimit: null }),
   setModels: (models) => set({ models }),
   setSelectedModel: (m) => set({ selectedModel: m }),
   setTheme: (t) => set({ theme: t }),
   setShowReasoning: (b) => set({ showReasoning: b }),
-  setLastPrompt: (p) => set({ lastPrompt: p }),
+  setLastPrompt: (p, clarify) => set({ lastPrompt: p, lastClarify: clarify }),
 
   applyPharEvent: (ev) => {
     const now = Date.now();
@@ -187,13 +201,25 @@ export const useAppStore = create<AppState>((set, get) => ({
         // Move to review only if we actually got diffs; otherwise idle.
         set({ phase: state.diffs.length > 0 ? "review" : "idle" });
         return;
-      case "error":
-        set({ error: ev.message });
+      case "error": {
+        const evTyped = ev as ErrorEvent;
+        // Rate-limit 429: stash structured fields so the UI can show a
+        // countdown + Retry button instead of just the message.
+        const rl =
+          evTyped.kind === "rate_limit"
+            ? {
+                model: evTyped.model ?? null,
+                resetAt: evTyped.reset_at ?? null,
+                retryAfterSeconds: evTyped.retry_after_seconds ?? null,
+              }
+            : null;
+        set({ error: evTyped.message, rateLimit: rl });
         // If we were mid-edit, fall back to review (so user can undo) when diffs exist.
         if (state.phase === "working") {
           set({ phase: state.diffs.length > 0 ? "review" : "idle" });
         }
         return;
+      }
       case "__stream_end__":
         // If the stream closed without an explicit `done`, still finalize.
         if (state.phase === "working") {

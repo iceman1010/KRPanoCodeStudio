@@ -20,9 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { invoke, isElectron } from "@/lib/electron";
+import { invoke, on, isElectron } from "@/lib/electron";
 import { useAppStore } from "@/stores/appStore";
 import { toast } from "sonner";
+import { FileText } from "lucide-react";
 
 interface SettingsModalProps {
   open: boolean;
@@ -43,8 +44,12 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [backupKeep, setBackupKeep] = useState(10);
   const [verifying, setVerifying] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [pharVersion, setPharVersion] = useState<string | null>(null);
+  const [latestTag, setLatestTag] = useState<string | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
-  // Try to load models on first open (if a tour is loaded).
+  // Try to load models + PHAR version on first open.
   useEffect(() => {
     if (!open) return;
     if (!isElectron()) return;
@@ -58,7 +63,28 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
         // ignore — settings can still work without models
       })
       .finally(() => setLoadingModels(false));
+    invoke<string>("phar_version")
+      .then(setPharVersion)
+      .catch(() => {});
   }, [open, setModels, selectedModel, setSelectedModel]);
+
+  // Listen for silent startup update notifications.
+  useEffect(() => {
+    if (!isElectron()) return;
+    const unlistenPromise = on<{
+      ok: boolean;
+      oldVersion?: string;
+      newVersion?: string;
+    }>("update-notification", (payload) => {
+      if (payload?.ok && payload.newVersion) {
+        setPharVersion(payload.newVersion);
+        toast.success(`KRpanoCode updated to v${payload.newVersion}`);
+      }
+    });
+    return () => {
+      unlistenPromise.then((fn) => fn());
+    };
+  }, []);
 
   async function verifyKey() {
     if (!apiKey) return;
@@ -68,14 +94,54 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     }
     setVerifying(true);
     try {
-      const ok = await invoke<boolean>("setup", apiKey, selectedModel);
-      if (ok) toast.success("API key verified");
+      const ok = await invoke<boolean>("setup", apiKey, selectedModel, backupKeep);
+      if (ok) toast.success("API key verified & saved");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setVerifying(false);
     }
   }
+
+  async function checkForUpdates() {
+    setCheckingUpdate(true);
+    try {
+      const current = pharVersion ?? (await invoke<string>("phar_version"));
+      const latest = await invoke<string>("latest_release");
+      setPharVersion(current);
+      setLatestTag(latest);
+      const latestClean = latest.replace(/^v/, "");
+      if (latestClean === current) {
+        toast.success(`Up to date (v${current})`);
+      } else {
+        toast.info(`Update available: ${latest} (you have v${current})`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function runUpdate() {
+    setUpdating(true);
+    try {
+      await invoke("self_update");
+      // After update, re-read the version from the updated PHAR.
+      const newVersion = await invoke<string>("phar_version");
+      setPharVersion(newVersion);
+      toast.success(`Updated to v${newVersion}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  const updateAvailable =
+    pharVersion !== null &&
+    latestTag !== null &&
+    latestTag.replace(/^v/, "") !== pharVersion;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -185,15 +251,68 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
             </Label>
           </div>
 
-          {/* Version */}
-          <div className="flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
-            <span>
-              KRpanoCode Studio <Badge variant="outline" className="ml-1">v0.1.0</Badge>
-            </span>
-            <Button variant="ghost" size="sm" disabled>
-              <RefreshCw className="mr-1.5 h-3 w-3" />
-              Check for updates
-            </Button>
+          {/* Version + update */}
+          <div className="space-y-2 border-t pt-3 text-xs text-muted-foreground">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                KRpanoCode Studio
+                <Badge variant="outline" className="ml-1">v0.1.0</Badge>
+                {pharVersion && (
+                  <span className="ml-2">
+                    PHAR <Badge variant="secondary" className="ml-0.5">v{pharVersion}</Badge>
+                  </span>
+                )}
+              </span>
+            </div>
+            <div className="flex gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={checkForUpdates}
+                disabled={checkingUpdate || updating}
+                className="text-xs"
+              >
+                {checkingUpdate ? (
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-1.5 h-3 w-3" />
+                )}
+                Check
+              </Button>
+              {updateAvailable && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={runUpdate}
+                  disabled={updating}
+                  className="text-xs"
+                >
+                  {updating ? (
+                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-1.5 h-3 w-3" />
+                  )}
+                  Update to {latestTag}
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs"
+                onClick={async () => {
+                  try {
+                    await invoke("open_log");
+                  } catch {
+                    const p = await invoke<string>("get_log_path");
+                    toast.info(`Log at ${p}`);
+                  }
+                }}
+                title="Open debug log in file manager"
+              >
+                <FileText className="mr-1.5 h-3 w-3" />
+                View log
+              </Button>
+            </div>
           </div>
         </div>
 

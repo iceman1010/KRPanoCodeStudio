@@ -29,7 +29,7 @@ export function PromptBox() {
     if (!prompt || disabled) return;
     setBusy(true);
     setValue("");
-    setLastPrompt(prompt);
+    setLastPrompt(prompt, clarify);
     clearDiffs();
     clearActivity();
     setError(null);

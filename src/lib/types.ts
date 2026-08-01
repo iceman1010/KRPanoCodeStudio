@@ -77,6 +77,11 @@ export interface RestoredEvent {
 export interface ErrorEvent {
   type: "error";
   message: string;
+  // Rate-limit (429) additive fields — present only when kind === "rate_limit".
+  kind?: "rate_limit";
+  model?: string;
+  reset_at?: string; // ISO-8601 UTC, e.g. "2026-07-25T10:44:41Z"
+  retry_after_seconds?: number;
 }
 
 // Synthetic event emitted by the Rust streamer when stdout closes (process exited).
