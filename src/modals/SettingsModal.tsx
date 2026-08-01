@@ -88,14 +88,24 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
 
   async function verifyKey() {
     if (!apiKey) return;
-    if (!selectedModel) {
-      toast.error("Pick a model first");
-      return;
-    }
     setVerifying(true);
     try {
       const ok = await invoke<boolean>("setup", apiKey, selectedModel, backupKeep);
-      if (ok) toast.success("API key verified & saved");
+      if (ok) {
+        toast.success("API key verified & saved");
+        // Reload models after successful setup
+        if (!isElectron()) return;
+        setLoadingModels(true);
+        invoke<string[]>("list_models")
+          .then((m) => {
+            setModels(m);
+            if (m.length > 0 && !selectedModel) setSelectedModel(m[0]);
+          })
+          .catch(() => {
+            // ignore — settings can still work without models
+          })
+          .finally(() => setLoadingModels(false));
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {

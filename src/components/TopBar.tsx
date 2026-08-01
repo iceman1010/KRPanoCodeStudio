@@ -2,6 +2,13 @@ import { useState } from "react";
 import { Settings, FolderOpen, Circle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { invoke } from "@/lib/electron";
 import { useAppStore } from "@/stores/appStore";
 import { toast } from "sonner";
@@ -22,6 +29,8 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
   const tour = useAppStore((s) => s.tour);
   const phase = useAppStore((s) => s.phase);
   const selectedModel = useAppStore((s) => s.selectedModel);
+  const models = useAppStore((s) => s.models);
+  const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const openTour = useAppStore((s) => s.openTour);
   const closeTour = useAppStore((s) => s.closeTour);
   const [busy, setBusy] = useState(false);
@@ -37,6 +46,16 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleModelChange(model: string) {
+    setSelectedModel(model);
+    // Save to preferences for persistence
+    try {
+      await invoke("set_preference", "selectedModel", model);
+    } catch (err) {
+      console.error("Failed to save model preference:", err);
     }
   }
 
@@ -63,8 +82,23 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
           </Button>
         </>
       )}
-      {selectedModel && (
-        <Badge variant="outline">{selectedModel}</Badge>
+      {models.length > 0 ? (
+        <Select value={selectedModel ?? ""} onValueChange={handleModelChange}>
+          <SelectTrigger className="w-[180px] h-8 text-xs">
+            <SelectValue placeholder="Model" />
+          </SelectTrigger>
+          <SelectContent>
+            {models.map((m) => (
+              <SelectItem key={m} value={m} className="text-xs">
+                {m}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <Badge variant="secondary" className="text-xs">
+          No API key
+        </Badge>
       )}
       <Button variant="ghost" size="icon" onClick={onOpenSettings} title="Settings">
         <Settings className="h-4 w-4" />

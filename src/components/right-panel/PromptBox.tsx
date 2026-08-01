@@ -13,6 +13,7 @@ export function PromptBox() {
   const clearDiffs = useAppStore((s) => s.clearDiffs);
   const setError = useAppStore((s) => s.setError);
   const setPhase = useAppStore((s) => s.setPhase);
+  const selectedModel = useAppStore((s) => s.selectedModel);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -35,7 +36,7 @@ export function PromptBox() {
     setError(null);
     setPhase("working");
     try {
-      await invoke("send_prompt", prompt, clarify);
+      await invoke("send_prompt", { prompt, clarify, model: selectedModel });
     } catch (err) {
       setBusy(false);
       setPhase("idle");

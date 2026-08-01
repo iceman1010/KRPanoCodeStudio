@@ -9,6 +9,7 @@ import { EmptyState } from "@/states/EmptyState";
 import { SettingsModal } from "@/modals/SettingsModal";
 import { useAppStore } from "@/stores/appStore";
 import { usePharStream } from "@/hooks/usePharStream";
+import { invoke } from "@/lib/electron";
 
 function useApplyTheme() {
   const theme = useAppStore((s) => s.theme);
@@ -31,7 +32,22 @@ export default function App() {
   useApplyTheme();
 
   const tour = useAppStore((s) => s.tour);
+  const setModels = useAppStore((s) => s.setModels);
+  const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Load saved preferences on startup
+  useEffect(() => {
+    const loadPreferences = async () => {
+      try {
+        const selectedModel = await invoke<string | null>("get_preference", "selectedModel");
+        if (selectedModel) setSelectedModel(selectedModel);
+      } catch (err) {
+        console.error("Failed to load preferences:", err);
+      }
+    };
+    loadPreferences();
+  }, [setSelectedModel]);
 
   if (!tour) {
     return (

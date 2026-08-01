@@ -477,7 +477,8 @@ ipcMain.handle("open_tour", async (event, folder) => {
   }
 });
 
-ipcMain.handle("send_prompt", async (event, prompt, clarify) => {
+ipcMain.handle("send_prompt", async (event, options) => {
+  const { prompt, clarify, model } = options;
   try {
     if (!tourFolder) return Promise.reject("no tour open");
     killCurrentChild();
@@ -487,6 +488,7 @@ ipcMain.handle("send_prompt", async (event, prompt, clarify) => {
     // the confirmation prompt.
     const args = ["--json", "--yes"];
     if (clarify) args.push("--clarify");
+    if (model) args.push("-m", model);
     args.push("-p", prompt, "-f", tourStr);
     await spawnPhar(args);
     return;
@@ -644,6 +646,51 @@ ipcMain.handle("open_external", async (event, url) => {
 
 ipcMain.handle("diag_log", async (event, data) => {
   console.log("[diag]", JSON.stringify(data));
+});
+
+// ---- User preferences storage ----
+const preferencesPath = path.join(app.getPath("userData"), "preferences.json");
+
+function loadPreferences() {
+  try {
+    if (fs.existsSync(preferencesPath)) {
+      const data = fs.readFileSync(preferencesPath, "utf-8");
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error("[prefs] failed to load:", String(err));
+  }
+  return {};
+}
+
+function savePreferences(prefs) {
+  try {
+    fs.mkdirSync(path.dirname(preferencesPath), { recursive: true });
+    fs.writeFileSync(preferencesPath, JSON.stringify(prefs, null, 2));
+  } catch (err) {
+    console.error("[prefs] failed to save:", String(err));
+  }
+}
+
+ipcMain.handle("get_preferences", async () => {
+  return loadPreferences();
+});
+
+ipcMain.handle("save_preferences", async (event, prefs) => {
+  savePreferences(prefs);
+  return true;
+});
+
+ipcMain.handle("get_preference", async (event, key) => {
+  const prefs = loadPreferences();
+  return prefs[key] ?? null;
+});
+
+ipcMain.handle("set_preference", async (event, key, value) => {
+  const prefs = loadPreferences();
+  prefs[key] = value;
+  savePreferences(prefs);
+  return true;
 });
 
 // ---- Window creation ----
