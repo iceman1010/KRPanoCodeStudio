@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---- determine if version changed ----
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: check
+        run: |
+          OLD=$(git show HEAD~1:package.json 2>/dev/null | jq -r .version || echo "0.0.0")
+          NEW=$(jq -r .version package.json)
+          echo "old=$OLD new=$NEW"
+          if [ "$OLD" != "$NEW" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW" >> "$GITHUB_OUTPUT"
+            echo "::notice::Version changed: $OLD → $NEW"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Version unchanged: $NEW"
+          fi
+
+  # ---- Linux build ----
+  linux:
+    needs: version-check
+    if: needs.version-check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, curl, openssl, posix, pcntl, zip, fileinfo
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download PHAR
+        run: bash scripts/download-phar.sh
+
+      - name: Bundle PHP
+        run: bash scripts/download-php.sh linux
+
+      - name: Build Vite
+        run: npm run build
+
+      - name: Package (AppImage + deb)
+        run: npm run package:linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: release/*.{AppImage,deb}
+
+  # ---- macOS build ----
+  macos-build:
+    needs: version-check
+    if: needs.version-check.outputs.changed == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, curl, openssl, posix, pcntl, zip, fileinfo
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download PHAR
+        run: bash scripts/download-phar.sh
+
+      - name: Bundle PHP
+        run: bash scripts/download-php.sh macos
+
+      - name: Build Vite
+        run: npm run build
+
+      - name: Package (dmg)
+        run: npm run package:mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: release/*.dmg
+
+  # ---- Windows build ----
+  windows-build:
+    needs: version-check
+    if: needs.version-check.outputs.changed == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, curl, openssl, posix, pcntl, zip, fileinfo
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download PHAR
+        shell: bash
+        run: bash scripts/download-phar.sh
+
+      - name: Bundle PHP
+        shell: bash
+        run: bash scripts/download-php.sh windows
+
+      - name: Build Vite
+        run: npm run build
+
+      - name: Package (nsis)
+        run: npm run package:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: release/*.exe
+
+  # ---- GitHub Release ----
+  create-release:
+    needs:
+      - version-check
+      - linux
+      - macos-build
+      - windows-build
+    if: needs.version-check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version-check.outputs.version }}
+          name: v${{ needs.version-check.outputs.version }}
+          files: |
+            linux-release/*
+            macos-release/*
+            windows-release/*
+          draft: false
+          prerelease: false

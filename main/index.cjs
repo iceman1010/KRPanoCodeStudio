@@ -304,6 +304,17 @@ function stopWatcher() {
 }
 
 // ---- PHAR / mock spawning ----
+function findSystemPhp() {
+  const candidates = [
+    "/usr/bin/php",
+    "/usr/local/bin/php",
+    "/opt/homebrew/bin/php",
+    "/opt/homebrew/opt/php/bin/php",
+  ];
+  for (const c of candidates) if (fs.existsSync(c)) return c;
+  return null;
+}
+
 function resolveBackend() {
   try {
     if (process.env.KRPANOCODE_DEV_MOCK) {
@@ -317,6 +328,11 @@ function resolveBackend() {
     const phar = ensurePharReady();
     const php = phpPath();
     if (!fs.existsSync(php)) {
+      const sysPhp = findSystemPhp();
+      if (sysPhp) {
+        console.log(`[backend] bundled PHP not found, using system PHP at ${sysPhp}`);
+        return { cmd: sysPhp, prefixArgs: [phar] };
+      }
       console.log(`[backend] PHP not found at ${php}, falling back to mock`);
       const mockPath = path.join(__dirname, "mock", "krpanocode-mock");
       return { cmd: mockPath, prefixArgs: [] };

@@ -51,6 +51,16 @@
       "dist/**",
       "main/**"
     ],
+    "extraResources": [
+      {
+        "from": "resources/php",
+        "to": "php"
+      },
+      {
+        "from": "resources/krpanocode.phar",
+        "to": "krpanocode.phar"
+      }
+    ],
     "linux": {
       "target": ["AppImage", "deb"],
       "category": "DeveloperTools"
