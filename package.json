@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "concurrently -k \"vite\" \"electron . --dev\"",
+    "dev:prod": "KRPANOCODE_DEV_MOCK=\"\" concurrently -k \"vite\" \"electron . --dev\"",
     "dev:vite": "vite",
     "dev:electron": "electron . --dev",
     "build": "vite build",

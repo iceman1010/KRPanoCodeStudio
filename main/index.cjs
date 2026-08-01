@@ -377,6 +377,7 @@ function spawnPhar(args) {
 
     // Stream stdout NDJSON lines to renderer
     let buffer = "";
+    let lastErrorEvent = null;
     child.stdout.on("data", (chunk) => {
       firstDataReceived = true;
       buffer += chunk.toString();
@@ -387,6 +388,9 @@ function spawnPhar(args) {
         if (!trimmed) continue;
         try {
           const evt = JSON.parse(trimmed);
+          if (evt.type === "error") {
+            lastErrorEvent = evt;
+          }
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send("phar-event", evt);
           }
@@ -426,10 +430,15 @@ function spawnPhar(args) {
     child.on("exit", (code, signal) => {
       console.log(`[spawn] exited code=${code} signal=${signal}`);
       if (code !== 0 && code !== null) {
-        const stderrTail = stderrBuffer.trim().slice(-500);
-        const msg = stderrTail
-          ? `PHAR exited with code ${code}: ${stderrTail}`
-          : `PHAR exited with code ${code}`;
+        let msg;
+        if (lastErrorEvent && lastErrorEvent.message) {
+          msg = lastErrorEvent.message;
+        } else {
+          const stderrTail = stderrBuffer.trim().slice(-500);
+          msg = stderrTail
+            ? `PHAR exited with code ${code}: ${stderrTail}`
+            : `PHAR exited with code ${code}`;
+        }
         if (!firstDataReceived) {
           // Never produced any output — likely a startup crash
           reject(msg);
