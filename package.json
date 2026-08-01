@@ -1,18 +1,22 @@
 {
   "name": "krpanocode-studio",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "main/index.cjs",
+  "author": {
+    "name": "iceman1010",
+    "email": "iceman1010@users.noreply.github.com"
+  },
   "scripts": {
     "dev": "concurrently -k \"vite\" \"electron . --dev\"",
     "dev:vite": "vite",
     "dev:electron": "electron . --dev",
     "build": "vite build",
-    "package": "electron-builder",
-    "package:linux": "electron-builder --linux",
-    "package:mac": "electron-builder --mac",
-    "package:win": "electron-builder --win"
+    "package": "electron-builder --publish never",
+    "package:linux": "electron-builder --linux --publish never",
+    "package:mac": "electron-builder --mac --publish never",
+    "package:win": "electron-builder --win --publish never"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.2.9",
