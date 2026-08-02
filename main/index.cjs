@@ -473,6 +473,14 @@ ipcMain.handle("open_tour", async (event, folder) => {
     stopWatcher();
     const port = await startHttpServer(resolved);
     startWatcher(resolved);
+    // Persist this tour in recent tours
+    const prefs = loadPreferences();
+    const recent = (prefs.recentTours || []).filter(
+      (t) => t.folder !== resolved
+    );
+    recent.unshift({ folder: resolved, openedAt: Date.now() });
+    prefs.recentTours = recent.slice(0, 5);
+    savePreferences(prefs);
     return `http://127.0.0.1:${port}/`;
   } catch (err) {
     return Promise.reject(String(err));

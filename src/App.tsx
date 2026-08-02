@@ -35,6 +35,7 @@ export default function App() {
   const tour = useAppStore((s) => s.tour);
   const setModels = useAppStore((s) => s.setModels);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
+  const setRecentTours = useAppStore((s) => s.setRecentTours);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Load saved preferences and models on startup
@@ -43,6 +44,11 @@ export default function App() {
       try {
         const selectedModel = await invoke<string | null>("get_preference", "selectedModel");
         if (selectedModel) setSelectedModel(selectedModel);
+        const recent = await invoke<{ folder: string; openedAt: number }[] | null>(
+          "get_preference",
+          "recentTours",
+        );
+        if (Array.isArray(recent)) setRecentTours(recent);
       } catch (err) {
         console.error("Failed to load preferences:", err);
       }
@@ -64,7 +70,7 @@ export default function App() {
     };
 
     Promise.all([loadPreferences(), loadModels()]);
-  }, [setSelectedModel, setModels]);
+  }, [setSelectedModel, setModels, setRecentTours]);
 
   if (!tour) {
     return (

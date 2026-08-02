@@ -14,6 +14,11 @@ export interface TourInfo {
   previewUrl: string;
 }
 
+export interface RecentTour {
+  folder: string;
+  openedAt: number;
+}
+
 // Re-export for callers that import from the store.
 export type { DiffEntry };
 
@@ -50,6 +55,8 @@ interface AppState {
   // --- prompt box ---
   lastPrompt: string;
   lastClarify: boolean;
+  // --- recent tours (quick links on the empty state) ---
+  recentTours: RecentTour[];
 
   // --- actions ---
   setPhase: (p: Phase) => void;
@@ -66,6 +73,7 @@ interface AppState {
   setTheme: (t: "light" | "dark" | "system") => void;
   setShowReasoning: (b: boolean) => void;
   setLastPrompt: (p: string, clarify: boolean) => void;
+  setRecentTours: (tours: RecentTour[]) => void;
 
   // The central event handler — dispatches any PHAR event into state changes.
   applyPharEvent: (ev: PharEvent) => void;
@@ -98,6 +106,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   showReasoning: false,
   lastPrompt: "",
   lastClarify: false,
+  recentTours: [],
 
   setPhase: (p) => set({ phase: p }),
   beginRun: () => set({ phase: "working", runStartedAt: Date.now() }),
@@ -139,6 +148,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setTheme: (t) => set({ theme: t }),
   setShowReasoning: (b) => set({ showReasoning: b }),
   setLastPrompt: (p, clarify) => set({ lastPrompt: p, lastClarify: clarify }),
+  setRecentTours: (tours) => set({ recentTours: tours }),
 
   applyPharEvent: (ev) => {
     const now = Date.now();
