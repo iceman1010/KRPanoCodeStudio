@@ -49,7 +49,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updating, setUpdating] = useState(false);
 
-  // Try to load models + PHAR version on first open.
+  // Load models + PHAR version on first open.
   useEffect(() => {
     if (!open) return;
     if (!isElectron()) return;
@@ -57,7 +57,6 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     invoke<string[]>("list_models")
       .then((m) => {
         setModels(m);
-        if (m.length > 0 && !selectedModel) setSelectedModel(m[0]);
       })
       .catch(() => {
         // ignore — settings can still work without models
@@ -66,7 +65,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     invoke<string>("phar_version")
       .then(setPharVersion)
       .catch(() => {});
-  }, [open, setModels, selectedModel, setSelectedModel]);
+  }, [open, setModels]);
 
   // Listen for silent startup update notifications.
   useEffect(() => {

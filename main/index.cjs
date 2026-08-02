@@ -1,4 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { autoUpdater } = require("electron-updater");
+const log = require("electron-log");
 const path = require("node:path");
 const http = require("node:http");
 const https = require("node:https");
@@ -690,7 +692,63 @@ ipcMain.handle("set_preference", async (event, key, value) => {
   const prefs = loadPreferences();
   prefs[key] = value;
   savePreferences(prefs);
-  return true;
+  return value;
+});
+
+// ---- App auto-update ----
+autoUpdater.logger = log;
+autoUpdater.logger.transports.file.level = "info";
+
+app.whenReady().then(() => {
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
+});
+
+autoUpdater.on("update-available", (info) => {
+  log.info("Update available:", info.version);
+  mainWindow?.webContents.send("update-available", info);
+});
+
+autoUpdater.on("update-not-available", (info) => {
+  log.info("No update available, current version:", info.version);
+});
+
+autoUpdater.on("download-progress", (progress) => {
+  mainWindow?.webContents.send("update-download-progress", progress);
+});
+
+autoUpdater.on("update-downloaded", (info) => {
+  log.info("Update downloaded:", info.version);
+  mainWindow?.webContents.send("update-downloaded", info);
+});
+
+autoUpdater.on("error", (err) => {
+  log.error("Update error:", err);
+  mainWindow?.webContents.send("update-error", String(err));
+});
+
+ipcMain.handle("check_for_updates", async () => {
+  if (!app.isPackaged) throw new Error("Updates only available in packaged app");
+  return await autoUpdater.checkForUpdates();
+});
+
+ipcMain.handle("download_update", async () => {
+  if (!app.isPackaged) throw new Error("Updates only available in packaged app");
+  autoUpdater.downloadUpdate();
+});
+
+ipcMain.handle("install_update", async () => {
+  if (!app.isPackaged) throw new Error("Updates only available in packaged app");
+  if (process.platform === "linux") {
+    await autoUpdater.installPendingUpdateIfAvailable();
+  } else {
+    autoUpdater.quitAndInstall();
+  }
+});
+
+ipcMain.handle("get_current_version", async () => {
+  return app.getVersion();
 });
 
 // ---- Window creation ----

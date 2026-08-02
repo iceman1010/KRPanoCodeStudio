@@ -68,7 +68,7 @@ jobs:
         run: npm run build
 
       - name: Package (AppImage + deb)
-        run: npm run package:linux
+        run: npm run package:linux -- --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -109,7 +109,7 @@ jobs:
         run: npm run build
 
       - name: Package (dmg, x64 + arm64)
-        run: npm run package:mac -- --x64 --arm64
+        run: npm run package:mac -- --x64 --arm64 --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -150,7 +150,7 @@ jobs:
         run: npm run build
 
       - name: Package (nsis)
-        run: npm run package:win
+        run: npm run package:win -- --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

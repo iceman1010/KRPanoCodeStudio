@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TopBar } from "@/components/TopBar";
 import { Preview } from "@/components/Preview";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { RightPanel } from "@/components/right-panel/RightPanel";
 import { EmptyState } from "@/states/EmptyState";
 import { SettingsModal } from "@/modals/SettingsModal";
@@ -36,7 +37,7 @@ export default function App() {
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // Load saved preferences on startup
+  // Load saved preferences and models on startup
   useEffect(() => {
     const loadPreferences = async () => {
       try {
@@ -46,13 +47,30 @@ export default function App() {
         console.error("Failed to load preferences:", err);
       }
     };
-    loadPreferences();
-  }, [setSelectedModel]);
+
+    const loadModels = async () => {
+      try {
+        const models = await invoke<string[]>("list_models");
+        setModels(models);
+
+        // Set initial model if none saved
+        const savedModel = await invoke<string | null>("get_preference", "selectedModel");
+        if (models.length > 0 && !savedModel) {
+          setSelectedModel(models[0]);
+        }
+      } catch (err) {
+        console.error("Failed to load models:", err);
+      }
+    };
+
+    Promise.all([loadPreferences(), loadModels()]);
+  }, [setSelectedModel, setModels]);
 
   if (!tour) {
     return (
       <TooltipProvider>
         <div className="flex h-screen flex-col bg-background text-foreground">
+          <UpdateBanner />
           <TopBar onOpenSettings={() => setSettingsOpen(true)} />
           <EmptyState />
           <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
@@ -65,6 +83,7 @@ export default function App() {
   return (
     <TooltipProvider>
       <div className="flex h-screen flex-col bg-background text-foreground">
+        <UpdateBanner />
         <TopBar onOpenSettings={() => setSettingsOpen(true)} />
         <div className="flex-1 overflow-hidden">
           <Group orientation="horizontal" style={{ height: "100%" }}>
