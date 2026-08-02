@@ -23,7 +23,8 @@ export function RateLimitBanner() {
   const clearDiffs = useAppStore((s) => s.clearDiffs);
   const clearActivity = useAppStore((s) => s.clearActivity);
   const setError = useAppStore((s) => s.setError);
-  const setPhase = useAppStore((s) => s.setPhase);
+  const beginRun = useAppStore((s) => s.beginRun);
+  const endRun = useAppStore((s) => s.endRun);
 
   const [remaining, setRemaining] = useState<number | null>(null);
   const [retrying, setRetrying] = useState(false);
@@ -49,11 +50,11 @@ export function RateLimitBanner() {
     setError(null);
     clearDiffs();
     clearActivity();
-    setPhase("working");
+    beginRun();
     try {
       await invoke("send_prompt", lastPrompt, lastClarify);
     } catch (err) {
-      setPhase("idle");
+      endRun("idle");
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setRetrying(false);

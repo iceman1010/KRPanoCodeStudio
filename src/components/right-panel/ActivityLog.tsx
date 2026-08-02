@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, FileSearch, FilePen, BookOpen } from "lucide-react";
+import { ChevronDown, ChevronRight, FileSearch, FilePen, BookOpen, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAppStore } from "@/stores/appStore";
+import { useRunElapsed } from "@/hooks/useRunElapsed";
 import type { ActivityEntry } from "@/lib/types";
 
 function ToolIcon({ name }: { name: string }) {
@@ -38,6 +39,7 @@ function ReasoningRow({ entry }: { entry: ActivityEntry }) {
 export function ActivityLog() {
   const activity = useAppStore((s) => s.activity);
   const phase = useAppStore((s) => s.phase);
+  const elapsed = useRunElapsed();
   const [collapsed, setCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -76,6 +78,12 @@ export function ActivityLog() {
             ? `${activity.length} ${activity.length === 1 ? "call" : "calls"}`
             : null}
         </span>
+        {elapsed && (
+          <span className="ml-auto flex items-center gap-1 text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span className="tabular-nums">{elapsed}</span>
+          </span>
+        )}
       </button>
       {!collapsed && (
         <div ref={scrollRef} className="max-h-[180px] overflow-y-auto px-3 pb-2">

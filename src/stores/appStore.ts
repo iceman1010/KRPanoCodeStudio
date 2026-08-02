@@ -25,6 +25,8 @@ interface AppState {
   backupPath: string | null;
   editable: string[];
   locked: string[];
+  // --- run timing (set when a prompt is submitted, cleared when the run ends) ---
+  runStartedAt: number | null;
   // --- activity log ---
   activity: ActivityEntry[];
   // --- diffs (keyed by file) ---
@@ -51,6 +53,8 @@ interface AppState {
 
   // --- actions ---
   setPhase: (p: Phase) => void;
+  beginRun: () => void;
+  endRun: (p: Phase) => void;
   openTour: (folder: string, previewUrl: string) => void;
   closeTour: () => void;
   clearActivity: () => void;
@@ -78,6 +82,7 @@ function tourNameFromFolder(folder: string): string {
 
 export const useAppStore = create<AppState>((set, get) => ({
   phase: "empty",
+  runStartedAt: null,
   tour: null,
   backupPath: null,
   editable: [],
@@ -95,6 +100,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastClarify: false,
 
   setPhase: (p) => set({ phase: p }),
+  beginRun: () => set({ phase: "working", runStartedAt: Date.now() }),
+  endRun: (p) => set({ phase: p, runStartedAt: null }),
   openTour: (folder, previewUrl) =>
     set({
       tour: { folder, name: tourNameFromFolder(folder), previewUrl },
@@ -104,6 +111,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       backupPath: null,
       editable: [],
       locked: [],
+      runStartedAt: null,
       clarifyQuestion: null,
       error: null,
       rateLimit: null,
@@ -117,6 +125,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       backupPath: null,
       editable: [],
       locked: [],
+      runStartedAt: null,
       clarifyQuestion: null,
       error: null,
       rateLimit: null,
@@ -195,11 +204,12 @@ export const useAppStore = create<AppState>((set, get) => ({
           phase: "idle",
           diffs: [],
           clarifyQuestion: null,
+          runStartedAt: null,
         });
         return;
       case "done":
         // Move to review only if we actually got diffs; otherwise idle.
-        set({ phase: state.diffs.length > 0 ? "review" : "idle" });
+        set({ phase: state.diffs.length > 0 ? "review" : "idle", runStartedAt: null });
         return;
       case "error": {
         const evTyped = ev as ErrorEvent;
@@ -216,14 +226,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         set({ error: evTyped.message, rateLimit: rl });
         // If we were mid-edit, fall back to review (so user can undo) when diffs exist.
         if (state.phase === "working") {
-          set({ phase: state.diffs.length > 0 ? "review" : "idle" });
+          set({ phase: state.diffs.length > 0 ? "review" : "idle", runStartedAt: null });
         }
         return;
       }
       case "__stream_end__":
         // If the stream closed without an explicit `done`, still finalize.
         if (state.phase === "working") {
-          set({ phase: state.diffs.length > 0 ? "review" : "idle" });
+          set({ phase: state.diffs.length > 0 ? "review" : "idle", runStartedAt: null });
         }
         return;
       case "version":

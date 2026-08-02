@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Sparkles, Square } from "lucide-react";
+import { Send, Sparkles, Square, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { invoke } from "@/lib/electron";
 import { useAppStore } from "@/stores/appStore";
+import { useRunElapsed } from "@/hooks/useRunElapsed";
 import { toast } from "sonner";
 
 export function PromptBox() {
@@ -12,8 +13,10 @@ export function PromptBox() {
   const clearActivity = useAppStore((s) => s.clearActivity);
   const clearDiffs = useAppStore((s) => s.clearDiffs);
   const setError = useAppStore((s) => s.setError);
-  const setPhase = useAppStore((s) => s.setPhase);
+  const beginRun = useAppStore((s) => s.beginRun);
+  const endRun = useAppStore((s) => s.endRun);
   const selectedModel = useAppStore((s) => s.selectedModel);
+  const elapsed = useRunElapsed();
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -34,12 +37,12 @@ export function PromptBox() {
     clearDiffs();
     clearActivity();
     setError(null);
-    setPhase("working");
+    beginRun();
     try {
       await invoke("send_prompt", { prompt, clarify, model: selectedModel });
     } catch (err) {
       setBusy(false);
-      setPhase("idle");
+      endRun("idle");
       toast.error(err instanceof Error ? err.message : String(err));
     }
   }
@@ -66,10 +69,16 @@ export function PromptBox() {
           Ask
         </label>
         {busy && (
-          <Button variant="ghost" size="sm" onClick={stopEdit} className="h-7 text-xs text-destructive">
-            <Square className="mr-1 h-3 w-3 fill-current" />
-            Stop
-          </Button>
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1 text-xs tabular-nums text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {elapsed ?? "0s"}
+            </span>
+            <Button variant="ghost" size="sm" onClick={stopEdit} className="h-7 text-xs text-destructive">
+              <Square className="mr-1 h-3 w-3 fill-current" />
+              Stop
+            </Button>
+          </div>
         )}
       </div>
       <Textarea

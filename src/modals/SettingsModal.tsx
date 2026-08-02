@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck, Download, FileText } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -23,11 +23,17 @@ import {
 import { invoke, on, isElectron } from "@/lib/electron";
 import { useAppStore } from "@/stores/appStore";
 import { toast } from "sonner";
-import { FileText } from "lucide-react";
 
 interface SettingsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+}
+
+// Electron wraps rejected IPC calls as "Error invoking remote method '<cmd>': <msg>".
+// Strip that noise so toasts show the actual message.
+function cleanErr(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
 }
 
 export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
@@ -44,10 +50,16 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [backupKeep, setBackupKeep] = useState(10);
   const [verifying, setVerifying] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
+  // --- PHAR (CLI) update state ---
   const [pharVersion, setPharVersion] = useState<string | null>(null);
   const [latestTag, setLatestTag] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updating, setUpdating] = useState(false);
+  // --- App (UI) update state ---
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [appUpdateInfo, setAppUpdateInfo] = useState<{ version: string } | null>(null);
+  const [appChecking, setAppChecking] = useState(false);
+  const [appUpdating, setAppUpdating] = useState(false);
 
   // Load models + PHAR version on first open.
   useEffect(() => {
@@ -64,6 +76,9 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       .finally(() => setLoadingModels(false));
     invoke<string>("phar_version")
       .then(setPharVersion)
+      .catch(() => {});
+    invoke<string>("get_current_version")
+      .then(setAppVersion)
       .catch(() => {});
   }, [open, setModels]);
 
@@ -84,6 +99,64 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       unlistenPromise.then((fn) => fn());
     };
   }, []);
+
+  // Listen for app (electron-updater) update events.
+  useEffect(() => {
+    if (!isElectron()) return;
+    let cancelled = false;
+    const subs: Array<() => void> = [];
+    (async () => {
+      subs.push(
+        await on<{ version: string }>("update-available", (info) => {
+          setAppUpdateInfo(info);
+        }),
+        await on<string>("update-not-available", (version) => {
+          if (!cancelled && open) {
+            toast.success(`You're up to date (v${version})`);
+          }
+        }),
+        await on("update-downloaded", () => {
+          setAppUpdating(false);
+          setAppUpdateInfo(null);
+        }),
+        await on<string>("update-error", () => {
+          setAppUpdating(false);
+        }),
+      );
+    })();
+    return () => {
+      cancelled = true;
+      subs.forEach((fn) => fn());
+    };
+  }, [open]);
+
+  async function checkAppForUpdates() {
+    setAppChecking(true);
+    try {
+      await invoke("check_for_updates");
+    } catch (err) {
+      const msg = cleanErr(err);
+      if (msg.includes("Updates only available in packaged app")) {
+        toast.info(
+          "Checking for updates only works in the installed version of the app — the dev build can't check.",
+        );
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setAppChecking(false);
+    }
+  }
+
+  async function downloadAppUpdate() {
+    setAppUpdating(true);
+    try {
+      await invoke("download_update");
+    } catch (err) {
+      setAppUpdating(false);
+      toast.error(cleanErr(err));
+    }
+  }
 
   async function verifyKey() {
     if (!apiKey) return;
@@ -260,48 +333,48 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
             </Label>
           </div>
 
-          {/* Version + update */}
-          <div className="space-y-2 border-t pt-3 text-xs text-muted-foreground">
+          {/* ---- App (UI) version + update ---- */}
+          <div className="space-y-1.5 border-t pt-3">
             <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1">
-                KRpanoCode Studio
-                <Badge variant="outline" className="ml-1">v0.1.0</Badge>
-                {pharVersion && (
-                  <span className="ml-2">
-                    PHAR <Badge variant="secondary" className="ml-0.5">v{pharVersion}</Badge>
-                  </span>
-                )}
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                KRpanoCode Studio (this app)
               </span>
+              {appVersion && <Badge variant="outline">v{appVersion}</Badge>}
             </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              This is the app you are looking at right now — the window with the
+              tour preview and the buttons. When a new version is released, a
+              banner appears at the top of the window to install it.
+            </p>
             <div className="flex gap-1">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={checkForUpdates}
-                disabled={checkingUpdate || updating}
+                onClick={checkAppForUpdates}
+                disabled={appChecking || appUpdating}
                 className="text-xs"
               >
-                {checkingUpdate ? (
+                {appChecking ? (
                   <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
                 ) : (
                   <RefreshCw className="mr-1.5 h-3 w-3" />
                 )}
-                Check
+                Check for updates
               </Button>
-              {updateAvailable && (
+              {appUpdateInfo && (
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={runUpdate}
-                  disabled={updating}
+                  onClick={downloadAppUpdate}
+                  disabled={appUpdating}
                   className="text-xs"
                 >
-                  {updating ? (
+                  {appUpdating ? (
                     <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
                   ) : (
-                    <RefreshCw className="mr-1.5 h-3 w-3" />
+                    <Download className="mr-1.5 h-3 w-3" />
                   )}
-                  Update to {latestTag}
+                  Update to {appUpdateInfo.version}
                 </Button>
               )}
               <Button
@@ -321,6 +394,53 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                 <FileText className="mr-1.5 h-3 w-3" />
                 View log
               </Button>
+            </div>
+          </div>
+
+          {/* ---- CLI (PHAR) version + update ---- */}
+          <div className="space-y-1.5 border-t pt-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                KRpanoCode CLI (the engine)
+              </span>
+              <Badge variant="secondary">v{pharVersion ?? "?"}</Badge>
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              This is the helper program that does the actual work behind the
+              scenes — it reads your tour files and makes the edits. It has no
+              window of its own. Use the buttons below to update it.
+            </p>
+            <div className="flex gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={checkForUpdates}
+                disabled={checkingUpdate || updating}
+                className="text-xs"
+              >
+                {checkingUpdate ? (
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-1.5 h-3 w-3" />
+                )}
+                Check for updates
+              </Button>
+              {updateAvailable && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={runUpdate}
+                  disabled={updating}
+                  className="text-xs"
+                >
+                  {updating ? (
+                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-1.5 h-3 w-3" />
+                  )}
+                  Update to {latestTag}
+                </Button>
+              )}
             </div>
           </div>
         </div>

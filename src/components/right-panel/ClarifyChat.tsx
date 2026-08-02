@@ -8,6 +8,7 @@ import { toast } from "sonner";
 export function ClarifyChat() {
   const question = useAppStore((s) => s.clarifyQuestion);
   const setPhase = useAppStore((s) => s.setPhase);
+  const endRun = useAppStore((s) => s.endRun);
   const [answer, setAnswer] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -35,7 +36,7 @@ export function ClarifyChat() {
     try {
       await invoke("clarify_answer", "skip");
       setAnswer("");
-      setPhase("idle");
+      endRun("idle");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {

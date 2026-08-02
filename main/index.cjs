@@ -712,6 +712,7 @@ autoUpdater.on("update-available", (info) => {
 
 autoUpdater.on("update-not-available", (info) => {
   log.info("No update available, current version:", info.version);
+  mainWindow?.webContents.send("update-not-available", info.version);
 });
 
 autoUpdater.on("download-progress", (progress) => {
