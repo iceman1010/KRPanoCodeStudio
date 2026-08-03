@@ -56,24 +56,49 @@ You are working on KRpanoCode Studio — an Electron desktop app (TypeScript + R
 
 ## Critical Development Rules
 
-### NEVER Auto-Commit or Release
-- Do NOT run `git commit` / `git push` without explicit permission
-- Do NOT bump `package.json` version automatically — CI releases are gated on version change
-- Do NOT create git tags — the GitHub Release workflow owns tagging
-- The CI/CD pipeline runs **only when `package.json` version changes** on `main` (see `docs/CICD.md`)
+### NEVER Auto-Commit, Release, or Touch the PHAR Build
+The user owns ALL of the following. The agent does NOT do these, even when they
+feel like "obvious follow-ups" to a code edit. Asking once at the start of a
+session does NOT cover the whole session — re-ask before each action:
 
-### ALWAYS Discuss Before Implementation
-The user requires discussion before code changes to avoid wasted tokens:
-1. Explain what you plan to do and why
-2. Show specific files and the nature of the change
-3. Wait for user approval
-4. Then implement
+- Do NOT run `git commit` / `git push` / `git tag` — anywhere, in either repo.
+- Do NOT bump `package.json` version automatically — CI releases are gated on
+  version change on `main` (see `docs/CICD.md`).
+- Do NOT rebuild, recompile, or replace the PHAR. The sister CLI repo
+  (`KRPano_LLM_code/`) build, `box.phar compile`, and the installed binary at
+  `~/.config/krpanocode-studio/krpanocode.phar` are the **user's** responsibility.
+  The agent may edit CLI source when asked, then STOP and hand back to the user
+  for rebuild + install.
+- Do NOT modify the installed PHAR, preferences, or any file under
+  `~/.config/krpanocode-studio/` other than by the app itself at runtime.
+
+### ALWAYS Discuss Before Implementation (HARD RULE)
+This is a hard rule, not a courtesy. Skipping it wastes the user's tokens,
+which is the one thing they have asked me to stop doing. Concretely, before
+*every* edit to a source file:
+
+1. State the file and the exact change you plan to make (a diff sketch is fine).
+2. State *why* — what bug or feature it serves.
+3. STOP. Do not call the edit/write tool. Do not start a chain of edits,
+   rebuilds, or verifications that depend on the edit.
+4. Wait for the user to say "go ahead", "yes", "do it", or equivalent.
+5. Only then perform the edit. If the user asks for multiple related edits in
+   one message, those are pre-approved — but each new logical change later in
+   the session needs a new round of discussion.
+
+Exception: a user instruction of the form "fix X" or "implement Y" approves the
+*specific* edit that fixes X / implements Y. It does NOT approve rebuilds, PHAR
+replacements, git commits, version bumps, or follow-on refactors — those still
+require explicit approval.
 
 ### Read-Only Operations Are Safe
 These do NOT require permission:
 - Reading files, searching with grep/glob
 - Running `git status`, `git log`, `git diff`
 - Providing analysis and explanations
+- `npm run build` is allowed (it's in the allowlist) — but it is a verification
+  step only, not a substitute for the user's runtime verification of the actual
+  Electron app.
 
 ### NEVER Claim Code is "Perfect" Without Runtime Verification
 After making changes:

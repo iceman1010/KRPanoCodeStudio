@@ -42,6 +42,33 @@ let currentChild = null;
 let currentStdin = null;
 let isDev = false;
 
+// Track the resolved backend signature so we only log it when it actually
+// changes — resolveBackend() is called on every spawn and was flooding the
+// log with the same "bundled PHP not found" line on every prompt.
+let lastBackendKey = null;
+
+// Forward every phar-event both to the renderer (IPC) and to studio.log.
+// Logging the full event stream here is what lets us diagnose premature PHAR
+// exits during multi-round clarify flows (see __stream_end__ handling).
+function emitPharEvent(evt) {
+  const serialized = JSON.stringify(evt);
+  // Cap log line at 500 chars — diff/reasoning events can be huge.
+  console.log(`[phar-event] ${serialized.slice(0, 500)}${serialized.length > 500 ? "…" : ""}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("phar-event", evt);
+  }
+}
+
+// Clear the current child/stdin globals ONLY if they still point to this
+// child. Guards against the race where a new spawn has already replaced them
+// before the old child's late exit/error callback fires.
+function detachChild(child) {
+  if (currentChild === child) {
+    currentChild = null;
+    currentStdin = null;
+  }
+}
+
 // ---- PHAR paths (writable copy in userData, bundled copy in resources) ----
 const RELEASES_LATEST_URL =
   "https://github.com/iceman1010/krpanocode-releases/releases/latest";
@@ -140,11 +167,53 @@ function getLatestReleaseTag() {
   });
 }
 
-// Run `--update` (no --json). Streams stdout lines to renderer as update-progress.
-function runSelfUpdate() {
-  const { cmd, prefixArgs } = resolveBackend();
+// List every release tag from the releases repo (newest first) so the UI can
+// offer a downgrade picker. Returns e.g. ["0.6.0", "0.5.11", ...].
+function listReleaseVersions() {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, [...prefixArgs, "--update"], {
+    const apiUrl =
+      "https://api.github.com/repos/iceman1010/krpanocode-releases/releases?per_page=100";
+    const req = https.get(
+      apiUrl,
+      { headers: { "User-Agent": "KRPanoCodeStudio", Accept: "application/vnd.github+json" } },
+      (res) => {
+        if (res.statusCode !== 200) {
+          reject(new Error(`unexpected status ${res.statusCode}`));
+          res.resume();
+          return;
+        }
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (d) => (body += d));
+        res.on("end", () => {
+          try {
+            const releases = JSON.parse(body);
+            if (!Array.isArray(releases)) throw new Error("bad payload");
+            const versions = releases
+              .map((r) => String(r.tag_name || "").replace(/^v/, ""))
+              .filter(Boolean);
+            resolve(versions);
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.setTimeout(15000, () => {
+      req.destroy();
+      reject(new Error("timeout"));
+    });
+  });
+}
+
+// Run `--update` (no --json). Streams stdout lines to renderer as update-progress.
+// Pass a version to pin it via `--to-version` (downgrade support).
+function runSelfUpdate(version) {
+  const { cmd, prefixArgs } = resolveBackend();
+  const updateArgs = version ? ["--update", "--to-version", version] : ["--update"];
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, [...prefixArgs, ...updateArgs], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
@@ -317,6 +386,15 @@ function findSystemPhp() {
   return null;
 }
 
+// Log a backend-resolution message only when the backend signature actually
+// changes. resolveBackend() runs on every spawn, so without this the log
+// fills with the same "bundled PHP not found" line on every prompt.
+function logBackendOnce(key, msg) {
+  if (key === lastBackendKey) return;
+  lastBackendKey = key;
+  console.log(msg);
+}
+
 function resolveBackend() {
   try {
     if (process.env.KRPANOCODE_DEV_MOCK) {
@@ -328,18 +406,32 @@ function resolveBackend() {
     }
     // prod: php + writable phar copy in userData (so --update can rewrite it)
     const phar = ensurePharReady();
+    // PHP ini override: default_socket_timeout (60s by default) applies to
+    // piped STDIN, causing fgets(STDIN) in jsonClarify() to return false
+    // after one minute even when the pipe is open and the user simply hasn't
+    // answered yet. -1 means no timeout. This must be passed as a CLI -d
+    // override (NOT via ini_set inside the script) because the timeout is
+    // bound when the STDIN stream is first opened, before the script runs.
+    // See https://github.com/iceman1010/KRPano_LLM_code commit 48b5a43 context.
+    const phpIniArgs = ["-d", "default_socket_timeout=-1"];
     const php = phpPath();
     if (!fs.existsSync(php)) {
       const sysPhp = findSystemPhp();
       if (sysPhp) {
-        console.log(`[backend] bundled PHP not found, using system PHP at ${sysPhp}`);
-        return { cmd: sysPhp, prefixArgs: [phar] };
+        logBackendOnce(
+          `sys:${sysPhp}`,
+          `[backend] bundled PHP not found, using system PHP at ${sysPhp}`
+        );
+        return { cmd: sysPhp, prefixArgs: [...phpIniArgs, phar] };
       }
-      console.log(`[backend] PHP not found at ${php}, falling back to mock`);
+      logBackendOnce(
+        `mock:fallback`,
+        `[backend] PHP not found at ${php}, falling back to mock`
+      );
       const mockPath = path.join(__dirname, "mock", "krpanocode-mock");
       return { cmd: mockPath, prefixArgs: [] };
     }
-    return { cmd: php, prefixArgs: [phar] };
+    return { cmd: php, prefixArgs: [...phpIniArgs, phar] };
   } catch (err) {
     console.error("[backend] resolveBackend error:", String(err));
     throw err;
@@ -368,13 +460,21 @@ function spawnPhar(args) {
     currentChild = child;
     currentStdin = child.stdin;
     let firstDataReceived = false;
+    // Track whether we've already finalized this child so a late callback
+    // (e.g. exit firing after stdout-end) doesn't double-emit __stream_end__.
+    let finalized = false;
+
+    const finalize = () => {
+      if (finalized) return;
+      finalized = true;
+      detachChild(child);
+      emitPharEvent({ type: "__stream_end__" });
+    };
 
     const sendError = (msg) => {
       console.error("[spawn] error:", msg);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("phar-event", { type: "error", message: msg });
-        mainWindow.webContents.send("phar-event", { type: "__stream_end__" });
-      }
+      emitPharEvent({ type: "error", message: msg });
+      finalize();
     };
 
     // Stream stdout NDJSON lines to renderer
@@ -393,13 +493,9 @@ function spawnPhar(args) {
           if (evt.type === "error") {
             lastErrorEvent = evt;
           }
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send("phar-event", evt);
-          }
+          emitPharEvent(evt);
         } catch {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send("phar-event", { type: "stderr", text: trimmed });
-          }
+          emitPharEvent({ type: "stderr", text: trimmed });
         }
       }
     });
@@ -413,15 +509,14 @@ function spawnPhar(args) {
 
     child.stdout.on("end", () => {
       console.log("[spawn] stdout ended");
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("phar-event", { type: "__stream_end__" });
-      }
+      finalize();
     });
 
     // If spawn itself fails (command not found, etc.)
     child.on("error", (err) => {
       console.error("[spawn] child error:", String(err));
       if (!firstDataReceived) {
+        detachChild(child);
         reject(String(err));
       } else {
         sendError(`Process error: ${String(err)}`);
@@ -431,6 +526,8 @@ function spawnPhar(args) {
     // Handle exit codes — non-zero means failure
     child.on("exit", (code, signal) => {
       console.log(`[spawn] exited code=${code} signal=${signal}`);
+      // Always detach on exit so clarify_answer can't write to a dead stream.
+      detachChild(child);
       if (code !== 0 && code !== null) {
         let msg;
         if (lastErrorEvent && lastErrorEvent.message) {
@@ -447,6 +544,10 @@ function spawnPhar(args) {
         } else {
           sendError(msg);
         }
+      } else {
+        // Clean exit — make sure the renderer sees __stream_end__ even if the
+        // PHAR closed stdout without an explicit `done` event (the clarify bug).
+        finalize();
       }
     });
 
@@ -508,11 +609,29 @@ ipcMain.handle("send_prompt", async (event, options) => {
 });
 
 ipcMain.handle("clarify_answer", async (event, answer) => {
-  if (!currentStdin) return Promise.reject("no active PHAR process");
+  const stdin = currentStdin;
+  // The PHAR may have exited while the user was typing their answer (the
+  // multi-round clarify bug). Guard the write so we never throw
+  // ERR_STREAM_DESTROYED — instead surface a readable error to the UI.
+  if (!stdin || stdin.destroyed || !stdin.writable) {
+    const msg = "The AI stream closed while waiting for your answer. Please retry the prompt.";
+    console.error("[clarify_answer] stream not writable:", msg);
+    emitPharEvent({ type: "error", message: msg });
+    emitPharEvent({ type: "__stream_end__" });
+    return Promise.reject(msg);
+  }
   return new Promise((resolve, reject) => {
-    currentStdin.write(answer + "\n", (err) => {
-      if (err) reject(String(err));
-      else resolve();
+    stdin.write(answer + "\n", (err) => {
+      if (err) {
+        // Write failed mid-flight — treat the stream as dead and clean up.
+        const msg = `Failed to send answer: ${String(err)}`;
+        console.error("[clarify_answer] write failed:", msg);
+        emitPharEvent({ type: "error", message: msg });
+        emitPharEvent({ type: "__stream_end__" });
+        reject(msg);
+      } else {
+        resolve();
+      }
     });
   });
 });
@@ -606,6 +725,26 @@ ipcMain.handle("phar_version", async () => {
   }
 });
 
+// Resolve the active backend (PHP binary + PHAR path, or the mock) without
+// spawning anything. Lets the Settings modal show the user exactly what is
+// running their edits — especially useful after `self_update` to confirm
+// which PHAR got replaced.
+ipcMain.handle("backend_info", async () => {
+  try {
+    const { cmd, prefixArgs } = resolveBackend();
+    // pharPath = the first .phar in prefixArgs, or null for mock backends.
+    const pharPath = prefixArgs.find((a) => a.endsWith(".phar")) ?? null;
+    return {
+      cmd,            // interpreter or mock script (e.g. /usr/bin/php)
+      prefixArgs,     // argv after cmd (e.g. ["/path/to/krpanocode.phar"])
+      pharPath,       // resolved .phar path or null
+      isMock: pharPath === null,
+    };
+  } catch (err) {
+    return Promise.reject(String(err));
+  }
+});
+
 ipcMain.handle("latest_release", async () => {
   try {
     return await getLatestReleaseTag();
@@ -614,9 +753,17 @@ ipcMain.handle("latest_release", async () => {
   }
 });
 
-ipcMain.handle("self_update", async () => {
+ipcMain.handle("list_release_versions", async () => {
   try {
-    return await runSelfUpdate();
+    return await listReleaseVersions();
+  } catch (err) {
+    return Promise.reject(String(err));
+  }
+});
+
+ipcMain.handle("self_update", async (_evt, version) => {
+  try {
+    return await runSelfUpdate(version);
   } catch (err) {
     return Promise.reject(String(err));
   }

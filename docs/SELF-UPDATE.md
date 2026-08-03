@@ -91,6 +91,51 @@ This ensures:
 - Metadata files are uploaded to GitHub Releases
 - Apps can query the update feed
 
+## PHAR Downgrade (Version Picker)
+
+### Overview
+
+The PHAR engine (the `krpanocode.phar` CLI) can be pinned to any previously
+released version, not just the newest one. This is useful when a newer engine
+release misbehaves — the user can step back to a known-good version and keep
+working while the issue is investigated.
+
+### CLI side
+
+The PHAR's `--update` accepts an optional `--to-version <ver>` argument:
+
+```bash
+krpanocode --update               # latest (up-to-date guard applies)
+krpanocode --update --to-version 0.5.8   # install a specific version (downgrade allowed)
+```
+
+- When `--to-version` is omitted, behavior is unchanged: `/releases/latest` +
+  a `version_compare('>=')` guard that short-circuits when already current.
+- When given, the CLI fetches `GET /repos/iceman1010/krpanocode-releases/releases/tags/v<ver>`
+  instead of `/latest`, and the `>=` guard is **skipped**, so downgrades work.
+- Unknown tag → `Version vX.Y.Z not found in releases.` (non-zero exit).
+- Still human-mode only (`--json --update` remains explicitly out of contract).
+
+### UI side
+
+Settings → "KRpanoCode CLI (the engine)" now has a version picker:
+
+- A **Select dropdown** lists `latest` plus every released version (fetched via
+  the `list_release_versions` IPC from
+  `https://api.github.com/repos/iceman1010/krpanocode-releases/releases?per_page=100`).
+- **"Update to latest" / "Install vX.Y.Z"** runs `self_update` (optionally with
+  the selected version), which spawns `--update --to-version X.Y.Z` and streams
+  progress back to the UI.
+- After the run the UI re-queries `phar_version` and refreshes the active
+  backend info.
+
+### Notes
+
+- Every release ships a `krpanocode.phar` asset, so all tagged versions are
+  downgrade-eligible.
+- Downgrades replace the PHAR in place at `<userData>/krpanocode.phar` (or the
+  CLI's own `argv[0]`), exactly like upgrades.
+
 ## Configuration Files
 
 ### `package.json`

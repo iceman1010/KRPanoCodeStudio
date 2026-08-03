@@ -234,16 +234,29 @@ export const useAppStore = create<AppState>((set, get) => ({
               }
             : null;
         set({ error: evTyped.message, rateLimit: rl });
-        // If we were mid-edit, fall back to review (so user can undo) when diffs exist.
-        if (state.phase === "working") {
-          set({ phase: state.diffs.length > 0 ? "review" : "idle", runStartedAt: null });
+        // If we were mid-edit or mid-clarify, fall back to review (so user can
+        // undo) when diffs exist, otherwise idle. Without the clarify branch
+        // here, a stream that dies while the user is typing an answer would
+        // leave the UI stuck on the clarify panel forever.
+        if (state.phase === "working" || state.phase === "clarify") {
+          set({
+            phase: state.diffs.length > 0 ? "review" : "idle",
+            runStartedAt: null,
+            clarifyQuestion: null,
+          });
         }
         return;
       }
       case "__stream_end__":
         // If the stream closed without an explicit `done`, still finalize.
-        if (state.phase === "working") {
-          set({ phase: state.diffs.length > 0 ? "review" : "idle", runStartedAt: null });
+        // Cover the clarify phase too: the PHAR may exit cleanly mid-clarify
+        // (the multi-round clarify bug) and we must not strand the UI.
+        if (state.phase === "working" || state.phase === "clarify") {
+          set({
+            phase: state.diffs.length > 0 ? "review" : "idle",
+            runStartedAt: null,
+            clarifyQuestion: null,
+          });
         }
         return;
       case "version":

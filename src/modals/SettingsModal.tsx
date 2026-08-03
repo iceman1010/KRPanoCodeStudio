@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw, ShieldCheck, Download, FileText } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck, Download, FileText, Copy, Terminal } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -52,9 +52,18 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [loadingModels, setLoadingModels] = useState(false);
   // --- PHAR (CLI) update state ---
   const [pharVersion, setPharVersion] = useState<string | null>(null);
+  const [backendInfo, setBackendInfo] = useState<{
+    cmd: string;
+    prefixArgs: string[];
+    pharPath: string | null;
+    isMock: boolean;
+  } | null>(null);
   const [latestTag, setLatestTag] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updating, setUpdating] = useState(false);
+  // All released PHAR versions (newest first) + the picker selection.
+  const [versions, setVersions] = useState<string[] | null>(null);
+  const [selectedVersion, setSelectedVersion] = useState("latest");
   // --- App (UI) update state ---
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [appUpdateInfo, setAppUpdateInfo] = useState<{ version: string } | null>(null);
@@ -76,6 +85,20 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       .finally(() => setLoadingModels(false));
     invoke<string>("phar_version")
       .then(setPharVersion)
+      .catch(() => {});
+    invoke<string[]>("list_release_versions")
+      .then((v) => {
+        setVersions(v);
+        setSelectedVersion("latest");
+      })
+      .catch(() => {});
+    invoke<{
+      cmd: string;
+      prefixArgs: string[];
+      pharPath: string | null;
+      isMock: boolean;
+    }>("backend_info")
+      .then(setBackendInfo)
       .catch(() => {});
     invoke<string>("get_current_version")
       .then(setAppVersion)
@@ -192,6 +215,13 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       const latest = await invoke<string>("latest_release");
       setPharVersion(current);
       setLatestTag(latest);
+      // Refresh the release list backing the version picker.
+      invoke<string[]>("list_release_versions")
+        .then((v) => {
+          setVersions(v);
+          setSelectedVersion((sel) => (v.includes(sel) ? sel : "latest"));
+        })
+        .catch(() => {});
       const latestClean = latest.replace(/^v/, "");
       if (latestClean === current) {
         toast.success(`Up to date (v${current})`);
@@ -208,10 +238,20 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   async function runUpdate() {
     setUpdating(true);
     try {
-      await invoke("self_update");
-      // After update, re-read the version from the updated PHAR.
+      const target = selectedVersion === "latest" ? undefined : selectedVersion;
+      await invoke("self_update", target);
+      // After update, re-read the version from the updated PHAR and refresh
+      // the backend info in case the path changed.
       const newVersion = await invoke<string>("phar_version");
       setPharVersion(newVersion);
+      invoke<{
+        cmd: string;
+        prefixArgs: string[];
+        pharPath: string | null;
+        isMock: boolean;
+      }>("backend_info")
+        .then(setBackendInfo)
+        .catch(() => {});
       toast.success(`Updated to v${newVersion}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -220,22 +260,17 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     }
   }
 
-  const updateAvailable =
-    pharVersion !== null &&
-    latestTag !== null &&
-    latestTag.replace(/^v/, "") !== pharVersion;
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
+      <DialogContent>
+        <DialogHeader className="shrink-0">
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
             Configure API access, default model, and UI preferences.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="-mx-4 min-h-0 flex-1 space-y-4 overflow-y-auto px-4">
           {/* API key */}
           <div className="space-y-1.5">
             <Label htmlFor="apikey">API key</Label>
@@ -410,7 +445,72 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               scenes — it reads your tour files and makes the edits. It has no
               window of its own. Use the buttons below to update it.
             </p>
-            <div className="flex gap-1">
+            {backendInfo && (
+              <div className="rounded-md border bg-muted/40 p-2 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
+                <div className="mb-1 flex items-center gap-1 text-[10px] uppercase tracking-wide not-italic">
+                  <Terminal className="h-3 w-3" />
+                  Active backend
+                </div>
+                <div className="break-all">
+                  <span className="text-foreground/80">{backendInfo.cmd}</span>
+                  {backendInfo.prefixArgs.map((a, i) => (
+                    <span key={i}> {a}</span>
+                  ))}
+                </div>
+                {backendInfo.isMock && (
+                  <div className="mt-1 text-amber-600 dark:text-amber-400">
+                    Mock backend (no real PHAR in use)
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="mt-1.5 inline-flex items-center gap-1 rounded text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+                  onClick={() => {
+                    const full = [backendInfo.cmd, ...backendInfo.prefixArgs].join(" ");
+                    navigator.clipboard?.writeText(full).then(
+                      () => toast.success("Copied command"),
+                      () => toast.error("Clipboard unavailable")
+                    );
+                  }}
+                  title="Copy full command"
+                >
+                  <Copy className="h-3 w-3" />
+                  Copy command
+                </button>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={selectedVersion}
+                onValueChange={setSelectedVersion}
+                disabled={!versions || versions.length === 0 || checkingUpdate || updating}
+              >
+                <SelectTrigger size="sm" className="w-36">
+                  <SelectValue placeholder="Version" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="latest">latest</SelectItem>
+                  {versions?.slice(0, 9).map((v) => (
+                    <SelectItem key={v} value={v}>
+                      v{v}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={runUpdate}
+                disabled={updating || !versions || versions.length === 0}
+                className="text-xs"
+              >
+                {updating ? (
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-1.5 h-3 w-3" />
+                )}
+                {selectedVersion === "latest" ? "Update to latest" : `Install v${selectedVersion}`}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -425,27 +525,11 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                 )}
                 Check for updates
               </Button>
-              {updateAvailable && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={runUpdate}
-                  disabled={updating}
-                  className="text-xs"
-                >
-                  {updating ? (
-                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                  ) : (
-                    <RefreshCw className="mr-1.5 h-3 w-3" />
-                  )}
-                  Update to {latestTag}
-                </Button>
-              )}
             </div>
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button onClick={() => onOpenChange(false)}>Done</Button>
         </DialogFooter>
       </DialogContent>
