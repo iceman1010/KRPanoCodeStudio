@@ -688,6 +688,15 @@ ipcMain.handle("list_models", async () => {
     });
     let buffer = "";
     let settled = false;
+    // The real PHAR runs with default_socket_timeout=-1 (needed for --clarify
+    // stdin reads), so a proxy request can block forever — e.g. a stale socket
+    // after suspend/resume. Time out so the renderer never waits indefinitely.
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject("Model list timed out");
+    }, 45000);
     child.stdout.on("data", (chunk) => {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
@@ -699,6 +708,7 @@ ipcMain.handle("list_models", async () => {
           const v = JSON.parse(trimmed);
           if (v.type === "models" && Array.isArray(v.models)) {
             settled = true;
+            clearTimeout(timeout);
             resolve(v.models);
             child.kill();
             return;
@@ -707,7 +717,9 @@ ipcMain.handle("list_models", async () => {
       }
     });
     child.on("error", (err) => {
+      if (settled) return;
       settled = true;
+      clearTimeout(timeout);
       reject(String(err));
     });
     // Ensure the promise settles if the backend exits without a models event
@@ -715,6 +727,7 @@ ipcMain.handle("list_models", async () => {
     child.on("exit", (code) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timeout);
       reject(`Model list failed (exit code ${code})`);
     });
   });

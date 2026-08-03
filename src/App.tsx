@@ -36,6 +36,7 @@ export default function App() {
   const setModels = useAppStore((s) => s.setModels);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const setModelsLoading = useAppStore((s) => s.setModelsLoading);
+  const setModelsLoadFailed = useAppStore((s) => s.setModelsLoadFailed);
   const setRecentTours = useAppStore((s) => s.setRecentTours);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -59,6 +60,7 @@ export default function App() {
       try {
         const models = await invoke<string[]>("list_models");
         setModels(models);
+        setModelsLoadFailed(false);
 
         // Set initial model if none saved
         const savedModel = await invoke<string | null>("get_preference", "selectedModel");
@@ -67,13 +69,14 @@ export default function App() {
         }
       } catch (err) {
         console.error("Failed to load models:", err);
+        setModelsLoadFailed(true);
       } finally {
         setModelsLoading(false);
       }
     };
 
     Promise.all([loadPreferences(), loadModels()]);
-  }, [setSelectedModel, setModels, setModelsLoading, setRecentTours]);
+  }, [setSelectedModel, setModels, setModelsLoading, setModelsLoadFailed, setRecentTours]);
 
   if (!tour) {
     return (

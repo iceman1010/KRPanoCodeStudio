@@ -31,6 +31,7 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
   const selectedModel = useAppStore((s) => s.selectedModel);
   const models = useAppStore((s) => s.models);
   const modelsLoading = useAppStore((s) => s.modelsLoading);
+  const modelsLoadFailed = useAppStore((s) => s.modelsLoadFailed);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const openTour = useAppStore((s) => s.openTour);
   const closeTour = useAppStore((s) => s.closeTour);
@@ -104,6 +105,13 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
             ))}
           </SelectContent>
         </Select>
+      ) : modelsLoadFailed ? (
+        <div
+          className="flex items-center gap-1.5 text-xs text-destructive"
+          title="The model list could not be loaded. Check your network connection or API key in Settings."
+        >
+          Models unavailable
+        </div>
       ) : (
         <Badge variant="secondary" className="text-xs">
           No API key

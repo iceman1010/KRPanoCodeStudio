@@ -50,6 +50,7 @@ interface AppState {
   models: string[];
   selectedModel: string | null;
   modelsLoading: boolean;
+  modelsLoadFailed: boolean;
   // --- UI prefs ---
   theme: "light" | "dark" | "system";
   showReasoning: boolean;
@@ -72,6 +73,7 @@ interface AppState {
   setModels: (models: string[]) => void;
   setSelectedModel: (m: string | null) => void;
   setModelsLoading: (b: boolean) => void;
+  setModelsLoadFailed: (b: boolean) => void;
   setTheme: (t: "light" | "dark" | "system") => void;
   setShowReasoning: (b: boolean) => void;
   setLastPrompt: (p: string, clarify: boolean) => void;
@@ -105,6 +107,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   models: [],
   selectedModel: null,
   modelsLoading: true,
+  modelsLoadFailed: false,
   theme: "system",
   showReasoning: false,
   lastPrompt: "",
@@ -149,6 +152,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setModels: (models) => set({ models }),
   setSelectedModel: (m) => set({ selectedModel: m }),
   setModelsLoading: (b) => set({ modelsLoading: b }),
+  setModelsLoadFailed: (b) => set({ modelsLoadFailed: b }),
   setTheme: (t) => set({ theme: t }),
   setShowReasoning: (b) => set({ showReasoning: b }),
   setLastPrompt: (p, clarify) => set({ lastPrompt: p, lastClarify: clarify }),
