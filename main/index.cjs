@@ -233,30 +233,58 @@ function runSelfUpdate(version) {
   });
 }
 
-// Silent startup check: compare installed vs latest; self-update if stale.
-async function checkForUpdatesSilently() {
+// Startup version check for BOTH the app (electron-updater) and the CLI
+// (PHAR). Notification-only: it never runs --update and never auto-downloads.
+// It coalesces both results and sends a single `update-check-notification`
+// event (with app/cli entries only when a newer version exists) so the
+// renderer can show one modal that points the user to Preferences.
+let startupUpdateNotificationSent = false;
+function sendStartupUpdateNotification(result) {
+  if (startupUpdateNotificationSent) return;
+  if (!(result.app || result.cli)) return;
+  startupUpdateNotificationSent = true;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("update-check-notification", result);
+  }
+}
+
+function checkUpdatesOnStartup() {
   // Skip in dev mode (mock backend has fake version) or if explicitly disabled
   if (isDev || process.env.KRPANOCODE_DEV === "1" || process.env.KRPANOCODE_DEV_MOCK) return;
-  try {
-    const current = await getPharVersion();
-    const latestTag = await getLatestReleaseTag();
-    const latest = latestTag.replace(/^v/, "");
-    if (latest === current) {
-      console.log(`[update] up to date (${current})`);
-      return;
+  const result = { app: null, cli: null };
+  let pending = 0;
+  const finish = () => {
+    if (--pending === 0) sendStartupUpdateNotification(result);
+  };
+
+  // CLI: compare installed PHAR version vs latest release. No --update.
+  pending++;
+  (async () => {
+    try {
+      const current = await getPharVersion();
+      const latest = (await getLatestReleaseTag()).replace(/^v/, "");
+      if (latest === current) {
+        console.log(`[update] CLI up to date (${current})`);
+      } else {
+        console.log(`[update] CLI ${current} → ${latest} available`);
+        result.cli = { currentVersion: current, newVersion: latest };
+      }
+    } catch (err) {
+      console.log("[update] CLI check failed:", String(err));
     }
-    console.log(`[update] ${current} → ${latest}, running --update...`);
-    await runSelfUpdate();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("update-notification", {
-        ok: true,
-        oldVersion: current,
-        newVersion: latest,
-      });
-    }
-  } catch (err) {
-    console.log("[update] check failed:", String(err));
-  }
+    finish();
+  })();
+
+  // App: electron-updater check only (autoDownload is false). Packaged only.
+  if (!app.isPackaged) return;
+  pending++;
+  autoUpdater.once("update-available", (info) => {
+    result.app = { currentVersion: app.getVersion(), newVersion: info.version };
+    finish();
+  });
+  autoUpdater.once("update-not-available", () => finish());
+  autoUpdater.once("error", () => finish());
+  autoUpdater.checkForUpdates().catch(() => finish());
 }
 
 const MIME = {
@@ -853,12 +881,9 @@ ipcMain.handle("set_preference", async (event, key, value) => {
 // ---- App auto-update ----
 autoUpdater.logger = log;
 autoUpdater.logger.transports.file.level = "info";
-
-app.whenReady().then(() => {
-  if (app.isPackaged) {
-    autoUpdater.checkForUpdatesAndNotify();
-  }
-});
+// Notification-only: never download in the background during a check. The
+// user explicitly triggers the download from Preferences.
+autoUpdater.autoDownload = false;
 
 autoUpdater.on("update-available", (info) => {
   log.info("Update available:", info.version);
@@ -944,7 +969,7 @@ app.whenReady().then(() => {
   initLogger();
   console.log(`[app] starting, dev=${isDev}, version=${app.getVersion()}`);
   createWindow();
-  checkForUpdatesSilently();
+  checkUpdatesOnStartup();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

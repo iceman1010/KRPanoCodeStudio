@@ -105,24 +105,6 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       .catch(() => {});
   }, [open, setModels]);
 
-  // Listen for silent startup update notifications.
-  useEffect(() => {
-    if (!isElectron()) return;
-    const unlistenPromise = on<{
-      ok: boolean;
-      oldVersion?: string;
-      newVersion?: string;
-    }>("update-notification", (payload) => {
-      if (payload?.ok && payload.newVersion) {
-        setPharVersion(payload.newVersion);
-        toast.success(`KRpanoCode updated to v${payload.newVersion}`);
-      }
-    });
-    return () => {
-      unlistenPromise.then((fn) => fn());
-    };
-  }, []);
-
   // Listen for app (electron-updater) update events.
   useEffect(() => {
     if (!isElectron()) return;

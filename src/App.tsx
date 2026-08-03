@@ -4,7 +4,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TopBar } from "@/components/TopBar";
 import { Preview } from "@/components/Preview";
-import { UpdateBanner } from "@/components/UpdateBanner";
+import { UpdateNotificationModal } from "@/components/UpdateNotificationModal";
 import { RightPanel } from "@/components/right-panel/RightPanel";
 import { EmptyState } from "@/states/EmptyState";
 import { SettingsModal } from "@/modals/SettingsModal";
@@ -76,10 +76,10 @@ export default function App() {
     return (
       <TooltipProvider>
         <div className="flex h-screen flex-col bg-background text-foreground">
-          <UpdateBanner />
           <TopBar onOpenSettings={() => setSettingsOpen(true)} />
           <EmptyState />
           <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
+          <UpdateNotificationModal />
           <Toaster richColors position="bottom-right" />
         </div>
       </TooltipProvider>
@@ -87,11 +87,10 @@ export default function App() {
   }
 
   return (
-    <TooltipProvider>
-      <div className="flex h-screen flex-col bg-background text-foreground">
-        <UpdateBanner />
-        <TopBar onOpenSettings={() => setSettingsOpen(true)} />
-        <div className="flex-1 overflow-hidden">
+      <TooltipProvider>
+        <div className="flex h-screen flex-col bg-background text-foreground">
+          <TopBar onOpenSettings={() => setSettingsOpen(true)} />
+          <div className="flex-1 overflow-hidden">
           <Group orientation="horizontal" style={{ height: "100%" }}>
             <Panel defaultSize="60%" minSize="40%" style={{ overflow: "hidden" }}>
               <Preview />
@@ -110,6 +109,7 @@ export default function App() {
           </Group>
         </div>
         <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <UpdateNotificationModal />
         <Toaster richColors position="bottom-right" />
       </div>
     </TooltipProvider>

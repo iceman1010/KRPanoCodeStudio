@@ -12,13 +12,14 @@ KRpanoCode Studio uses `electron-updater` (part of the electron-builder ecosyste
 - Electron-builder generates metadata files (`latest.yml`, `latest-mac.yml`, `latest-linux.yml`) during packaging
 - Metadata files are uploaded to GitHub Releases alongside the binaries
 
-### Update Flow
+### Update Flow (notification-only)
 
-1. **App startup** → `autoUpdater.checkForUpdatesAndNotify()` runs (packaged app only)
-2. **Check available** → Queries GitHub Releases API for newer version
-3. **Download** → Automatically downloads update in background if available
-4. **Notify user** → `UpdateBanner` component shows "Update Now" button
-5. **Install** → On user confirmation, spawns installer and restarts app
+1. **App startup** → `checkUpdatesOnStartup()` runs (see main process below)
+2. **Check app update** → `autoUpdater.checkForUpdates()` (with `autoDownload = false`, so nothing is downloaded automatically)
+3. **Check CLI update** → compares the installed PHAR version vs the latest `krpanocode-releases` tag (via GitHub API); **never** runs `--update` on its own
+4. **Notify user** → if *either* the app or the CLI is stale, a single `update-check-notification` event is sent to the renderer
+5. **`UpdateNotificationModal`** → a modal with a single **OK** button tells the user what is outdated and directs them to Preferences (Settings), where the actual update buttons live
+6. **Install** → the user installs from Preferences: app update via "Update to X", CLI update via the version picker
 
 ## Platform-Specific Behavior
 
@@ -44,13 +45,15 @@ const log = require("electron-log");
 
 autoUpdater.logger = log;
 autoUpdater.logger.transports.file.level = "info";
-
-app.whenReady().then(() => {
-  if (app.isPackaged) {
-    autoUpdater.checkForUpdatesAndNotify();
-  }
-});
+autoUpdater.autoDownload = false; // never download during a check
 ```
+
+**Startup check (`checkUpdatesOnStartup`):**
+- Runs once after the window is created (`checkUpdatesOnStartup()` in the `app.whenReady()` block)
+- Skipped in dev mode / when a mock backend is active
+- CLI check: `getPharVersion()` vs `getLatestReleaseTag()` — comparison only, no `--update`
+- App check: `autoUpdater.checkForUpdates()` (packaged app only)
+- Coalesces both results and, if anything is stale, sends one `update-check-notification` event: `{ app: { currentVersion, newVersion } | null, cli: { currentVersion, newVersion } | null }`
 
 **Event handlers:**
 - `update-available` → Sends to renderer via `webContents.send("update-available", info)`
@@ -61,19 +64,17 @@ app.whenReady().then(() => {
 
 **IPC handlers:**
 - `check_for_updates()` → Manual check for updates
-- `download_update()` → Trigger download (starts automatically by default)
+- `download_update()` → Trigger download (user-initiated from Preferences)
 - `install_update()` → Install and restart
 - `get_current_version()` → Return current app version
 
-### Renderer (`src/components/UpdateBanner.tsx`)
+### Renderer (`src/components/UpdateNotificationModal.tsx`)
 
-Banner component that:
-- Listens for update events from main process via `on("update-available")`, `on("update-downloaded")`, etc.
-- Shows update notification with version number
-- Displays download progress (0-100%)
-- Provides "Update Now" button to trigger install
-- Shows "restart to apply" when download completes
-- Dismissible via X button
+Modal component that:
+- Listens for the `update-check-notification` event from the main process
+- Appears only when a new app and/or CLI version is available
+- Lists what is outdated (with current vs new versions) and instructs the user to open Preferences
+- Shows a single **OK** button (`showCloseButton={false}`, no close X) to dismiss
 
 ### CI/CD (`.github/workflows/release.yml`)
 
@@ -204,7 +205,8 @@ Auto-update is **disabled in dev mode** (`app.isPackaged === false`). To test:
 - [ ] Download progress bar displays correctly
 - [ ] "Update Now" button triggers download
 - [ ] "restart to apply" message appears after download
-- [ ] Banner can be dismissed
+- [ ] Startup modal appears only when an update is available (app and/or CLI)
+- [ ] Startup modal can be dismissed via its single OK button
 - [ ] Manual check via IPC works
 - [ ] Error handling (network failure, corrupted download)
 
