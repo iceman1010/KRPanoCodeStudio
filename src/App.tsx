@@ -35,6 +35,7 @@ export default function App() {
   const tour = useAppStore((s) => s.tour);
   const setModels = useAppStore((s) => s.setModels);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
+  const setModelsLoading = useAppStore((s) => s.setModelsLoading);
   const setRecentTours = useAppStore((s) => s.setRecentTours);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -66,11 +67,13 @@ export default function App() {
         }
       } catch (err) {
         console.error("Failed to load models:", err);
+      } finally {
+        setModelsLoading(false);
       }
     };
 
     Promise.all([loadPreferences(), loadModels()]);
-  }, [setSelectedModel, setModels, setRecentTours]);
+  }, [setSelectedModel, setModels, setModelsLoading, setRecentTours]);
 
   if (!tour) {
     return (

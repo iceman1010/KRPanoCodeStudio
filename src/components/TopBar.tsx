@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Settings, FolderOpen, Circle } from "lucide-react";
+import { Settings, FolderOpen, Circle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -30,6 +30,7 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
   const phase = useAppStore((s) => s.phase);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const models = useAppStore((s) => s.models);
+  const modelsLoading = useAppStore((s) => s.modelsLoading);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const openTour = useAppStore((s) => s.openTour);
   const closeTour = useAppStore((s) => s.closeTour);
@@ -82,7 +83,15 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
           </Button>
         </>
       )}
-      {models.length > 0 ? (
+      {modelsLoading ? (
+        <div
+          className="flex items-center gap-1.5 text-xs text-muted-foreground"
+          title="Loading models…"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading models…
+        </div>
+      ) : models.length > 0 ? (
         <Select value={selectedModel ?? ""} onValueChange={handleModelChange}>
           <SelectTrigger className="w-[180px] h-8 text-xs">
             <SelectValue placeholder="Model" />

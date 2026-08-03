@@ -49,6 +49,7 @@ interface AppState {
   // --- models ---
   models: string[];
   selectedModel: string | null;
+  modelsLoading: boolean;
   // --- UI prefs ---
   theme: "light" | "dark" | "system";
   showReasoning: boolean;
@@ -70,6 +71,7 @@ interface AppState {
   clearRateLimit: () => void;
   setModels: (models: string[]) => void;
   setSelectedModel: (m: string | null) => void;
+  setModelsLoading: (b: boolean) => void;
   setTheme: (t: "light" | "dark" | "system") => void;
   setShowReasoning: (b: boolean) => void;
   setLastPrompt: (p: string, clarify: boolean) => void;
@@ -102,6 +104,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   rateLimit: null,
   models: [],
   selectedModel: null,
+  modelsLoading: true,
   theme: "system",
   showReasoning: false,
   lastPrompt: "",
@@ -145,6 +148,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearRateLimit: () => set({ rateLimit: null }),
   setModels: (models) => set({ models }),
   setSelectedModel: (m) => set({ selectedModel: m }),
+  setModelsLoading: (b) => set({ modelsLoading: b }),
   setTheme: (t) => set({ theme: t }),
   setShowReasoning: (b) => set({ showReasoning: b }),
   setLastPrompt: (p, clarify) => set({ lastPrompt: p, lastClarify: clarify }),

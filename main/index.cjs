@@ -687,6 +687,7 @@ ipcMain.handle("list_models", async () => {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let buffer = "";
+    let settled = false;
     child.stdout.on("data", (chunk) => {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
@@ -697,6 +698,7 @@ ipcMain.handle("list_models", async () => {
         try {
           const v = JSON.parse(trimmed);
           if (v.type === "models" && Array.isArray(v.models)) {
+            settled = true;
             resolve(v.models);
             child.kill();
             return;
@@ -704,7 +706,17 @@ ipcMain.handle("list_models", async () => {
         } catch {}
       }
     });
-    child.on("error", (err) => reject(String(err)));
+    child.on("error", (err) => {
+      settled = true;
+      reject(String(err));
+    });
+    // Ensure the promise settles if the backend exits without a models event
+    // (e.g. no API key configured) — otherwise the renderer would wait forever.
+    child.on("exit", (code) => {
+      if (settled) return;
+      settled = true;
+      reject(`Model list failed (exit code ${code})`);
+    });
   });
 });
 
