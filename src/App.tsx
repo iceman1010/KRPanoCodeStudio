@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { TopBar } from "@/components/TopBar";
 import { Preview } from "@/components/Preview";
 import { UpdateNotificationModal } from "@/components/UpdateNotificationModal";
+import { IdleTimeoutModal } from "@/components/IdleTimeoutModal";
 import { RightPanel } from "@/components/right-panel/RightPanel";
 import { EmptyState } from "@/states/EmptyState";
 import { SettingsModal } from "@/modals/SettingsModal";
@@ -86,6 +87,7 @@ export default function App() {
           <EmptyState />
           <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
           <UpdateNotificationModal />
+          <IdleTimeoutModal />
           <Toaster richColors position="bottom-right" />
         </div>
       </TooltipProvider>
@@ -116,6 +118,7 @@ export default function App() {
         </div>
         <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
         <UpdateNotificationModal />
+          <IdleTimeoutModal />
         <Toaster richColors position="bottom-right" />
       </div>
     </TooltipProvider>

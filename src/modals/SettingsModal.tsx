@@ -69,6 +69,8 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [appUpdateInfo, setAppUpdateInfo] = useState<{ version: string } | null>(null);
   const [appChecking, setAppChecking] = useState(false);
   const [appUpdating, setAppUpdating] = useState(false);
+  // CLI idle timeout in minutes (default 5, stored as ms in prefs)
+  const [cliIdleMinutes, setCliIdleMinutes] = useState(5);
 
   // Load models + PHAR version on first open.
   useEffect(() => {
@@ -102,6 +104,13 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       .catch(() => {});
     invoke<string>("get_current_version")
       .then(setAppVersion)
+      .catch(() => {});
+    invoke<number>("get_preference", "cliIdleTimeoutMs")
+      .then((v) => {
+        if (typeof v === "number" && v >= 1000) {
+          setCliIdleMinutes(Math.round(v / 60000));
+        }
+      })
       .catch(() => {});
   }, [open, setModels]);
 
@@ -319,6 +328,30 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               />
               <span className="text-xs text-muted-foreground">
                 backups kept per tour (managed by PHAR)
+              </span>
+            </div>
+          </div>
+
+          {/* CLI idle timeout */}
+          <div className="space-y-1.5">
+            <Label htmlFor="cliIdleTimeout">CLI idle timeout</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="cliIdleTimeout"
+                type="number"
+                min={1}
+                max={60}
+                value={cliIdleMinutes}
+                onChange={(e) => {
+                  const v = Number(e.target.value) || 1;
+                  setCliIdleMinutes(v);
+                  invoke("set_preference", "cliIdleTimeoutMs", v * 60000);
+                }}
+                className="w-20"
+              />
+              <span className="text-xs text-muted-foreground">
+                minutes before the app warns that a CLI call is idle (5 min
+                default). Applies at the next run.
               </span>
             </div>
           </div>

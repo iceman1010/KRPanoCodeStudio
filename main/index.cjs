@@ -40,6 +40,80 @@ let tourFolder = null;
 let watcher = null;
 let currentChild = null;
 let currentStdin = null;
+// Idle-timeout machinery for PHAR streams. The CLI runs with
+// default_socket_timeout=-1 (required for --clarify stdin reads), so a stale
+// socket after suspend/resume can block forever. We arm an idle timer (default
+// 5 minutes, configurable via preferences.cliIdleTimeoutMs) that resets on
+// every stdout line; while a clarify event is pending (the PHAR is waiting for
+// the user's answer) the timer is paused so we never rush the user. On fire we
+// DO NOT kill the child immediately — we pop a modal in the renderer offering
+// Abort or Extend, and only act when the user responds. This avoids killing a
+// run that's just genuinely slow while still recovering from a truly dead socket.
+const DEFAULT_CLI_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+let idleTimer = null;
+let inClarify = false;
+// Remember how to re-arm the idle timer for the currently-running stream. The
+// clarify_answer handler uses this to resume the timer once the user answers
+// (it is paused while the PHAR waits for input). Set by spawnPhar/setup/etc.
+let currentIdleResetFn = null;
+// When a timer fires, we remember how to abort/extend that specific run so the
+// `respond_idle_timeout` IPC can act on it. There is at most one outstanding
+// idle timeout at a time (a single PHAR child is ever active).
+let pendingIdle = null;
+
+function getCliIdleTimeoutMs() {
+  try {
+    const prefs = loadPreferences();
+    const v = Number(prefs.cliIdleTimeoutMs);
+    if (Number.isFinite(v) && v >= 1000) return v;
+  } catch {}
+  return DEFAULT_CLI_IDLE_TIMEOUT_MS;
+}
+
+function armIdleTimer(resetFn) {
+  // resetFn: called when the timer fires. It must set pendingIdle so the
+  // renderer's response can act on this run.
+  disarmIdleTimer();
+  currentIdleResetFn = resetFn;
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    if (typeof resetFn === "function") resetFn();
+  }, getCliIdleTimeoutMs());
+}
+function disarmIdleTimer() {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  currentIdleResetFn = null;
+}
+
+// Fire an idle-timeout notification to the renderer and record how to abort /
+// extend this run. `scope` is shown in the modal; `onAbort`/`onExtend` are
+// called from the `respond_idle_timeout` IPC handler.
+function notifyIdleTimeout(scope, onAbort, onExtend) {
+  // If a previous prompt is outstanding (shouldn't happen, but be safe),
+  // auto-abort it so the new one takes over cleanly.
+  if (pendingIdle && pendingIdle.onAbort) pendingIdle.onAbort();
+  pendingIdle = { scope, onAbort, onExtend };
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("cli-idle-timeout", { scope });
+  } else {
+    // No window to ask — default to abort so we never hang forever.
+    if (onAbort) onAbort();
+    pendingIdle = null;
+  }
+}
+
+ipcMain.handle("respond_idle_timeout", async (_evt, payload) => {
+  const action = payload && payload.action;
+  const p = pendingIdle;
+  pendingIdle = null;
+  if (!p) return;
+  if (action === "extend") {
+    if (typeof p.onExtend === "function") p.onExtend();
+  } else {
+    // "abort" or anything else
+    if (typeof p.onAbort === "function") p.onAbort();
+  }
+});
 let isDev = false;
 
 // Track the resolved backend signature so we only log it when it actually
@@ -121,9 +195,25 @@ function getPharVersion() {
     const child = spawn(cmd, [...prefixArgs, "--json", "--version"], {
       stdio: ["ignore", "pipe", "pipe"],
     });
+    let settled = false;
     let out = "";
+    const onIdleFire = () => {
+      notifyIdleTimeout(
+        "version",
+        () => {
+          settled = true;
+          disarmIdleTimer();
+          try { child.kill(); } catch {}
+          reject("Version check aborted (idle too long)");
+        },
+        () => armIdleTimer(onIdleFire),
+      );
+    };
     child.stdout.on("data", (d) => { out += d.toString(); });
     child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      disarmIdleTimer();
       if (code !== 0) return reject(`version check exited ${code}`);
       const lines = out.trim().split("\n");
       for (let i = lines.length - 1; i >= 0; i--) {
@@ -136,7 +226,13 @@ function getPharVersion() {
       }
       reject("could not parse version output");
     });
-    child.on("error", reject);
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      disarmIdleTimer();
+      reject(String(err));
+    });
+    armIdleTimer(onIdleFire);
   });
 }
 
@@ -216,7 +312,20 @@ function runSelfUpdate(version) {
     const child = spawn(cmd, [...prefixArgs, ...updateArgs], {
       stdio: ["ignore", "pipe", "pipe"],
     });
+    let settled = false;
     let out = "";
+    const onIdleFire = () => {
+      notifyIdleTimeout(
+        "update",
+        () => {
+          settled = true;
+          disarmIdleTimer();
+          try { child.kill(); } catch {}
+          reject(new Error("Self-update aborted (idle too long)"));
+        },
+        () => armIdleTimer(onIdleFire),
+      );
+    };
     child.stdout.on("data", (d) => {
       const text = d.toString();
       out += text;
@@ -226,10 +335,19 @@ function runSelfUpdate(version) {
     });
     child.stderr.on("data", (d) => { out += d.toString(); });
     child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      disarmIdleTimer();
       if (code === 0) resolve(out);
       else reject(new Error(`update exited ${code}: ${out}`));
     });
-    child.on("error", reject);
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      disarmIdleTimer();
+      reject(err);
+    });
+    armIdleTimer(onIdleFire);
   });
 }
 
@@ -496,6 +614,7 @@ function spawnPhar(args) {
       if (finalized) return;
       finalized = true;
       detachChild(child);
+      disarmIdleTimer();
       emitPharEvent({ type: "__stream_end__" });
     };
 
@@ -508,8 +627,34 @@ function spawnPhar(args) {
     // Stream stdout NDJSON lines to renderer
     let buffer = "";
     let lastErrorEvent = null;
+
+    // Idle-timeout handlers for THIS child. Abort kills + surfaces an error;
+    // Extend just re-arms the timer and lets the child keep running. Both clear
+    // the pendingIdle slot.
+    const onIdleFire = () => {
+      notifyIdleTimeout(
+        "edit",
+        () => {
+          // abort
+          inClarify = false;
+          try { child.kill(); } catch {}
+          if (!firstDataReceived) {
+            reject("PHAR run aborted (idle too long)");
+          } else {
+            sendError("PHAR run aborted: no output for the configured idle timeout. Check your network or the CLI.");
+          }
+        },
+        () => {
+          // extend — re-arm and continue
+          armIdleTimer(onIdleFire);
+        },
+      );
+    };
+
     child.stdout.on("data", (chunk) => {
       firstDataReceived = true;
+      // Reset idle timer on every chunk while not waiting on the user.
+      if (!inClarify) armIdleTimer(onIdleFire);
       buffer += chunk.toString();
       const lines = buffer.split("\n");
       buffer = lines.pop();
@@ -520,6 +665,12 @@ function spawnPhar(args) {
           const evt = JSON.parse(trimmed);
           if (evt.type === "error") {
             lastErrorEvent = evt;
+          }
+          if (evt.type === "clarify") {
+            // Pause the idle timer while the PHAR waits for user input — we
+            // must never rush the user. clarify_answer re-arms it on write ok.
+            inClarify = true;
+            disarmIdleTimer();
           }
           emitPharEvent(evt);
         } catch {
@@ -556,6 +707,9 @@ function spawnPhar(args) {
       console.log(`[spawn] exited code=${code} signal=${signal}`);
       // Always detach on exit so clarify_answer can't write to a dead stream.
       detachChild(child);
+      // Clear any pending idle timeout — the child is gone, so the user's
+      // response would be a no-op anyway. Drop the modal's promise silently.
+      if (pendingIdle && pendingIdle.scope === "edit") pendingIdle = null;
       if (code !== 0 && code !== null) {
         let msg;
         if (lastErrorEvent && lastErrorEvent.message) {
@@ -579,6 +733,9 @@ function spawnPhar(args) {
       }
     });
 
+    // Arm the idle timer once the child is alive.
+    armIdleTimer(onIdleFire);
+
     resolve();
   });
 }
@@ -589,6 +746,8 @@ function killCurrentChild() {
     currentChild = null;
     currentStdin = null;
   }
+  disarmIdleTimer();
+  inClarify = false;
 }
 
 // ---- IPC handlers ----
@@ -658,6 +817,10 @@ ipcMain.handle("clarify_answer", async (event, answer) => {
         emitPharEvent({ type: "__stream_end__" });
         reject(msg);
       } else {
+        // Resume the idle timer now that the user has answered — a stale
+        // socket right after this point should still be recoverable.
+        inClarify = false;
+        if (currentIdleResetFn) armIdleTimer(currentIdleResetFn);
         resolve();
       }
     });
@@ -688,15 +851,18 @@ ipcMain.handle("list_models", async () => {
     });
     let buffer = "";
     let settled = false;
-    // The real PHAR runs with default_socket_timeout=-1 (needed for --clarify
-    // stdin reads), so a proxy request can block forever — e.g. a stale socket
-    // after suspend/resume. Time out so the renderer never waits indefinitely.
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill();
-      reject("Model list timed out");
-    }, 45000);
+    const onIdleFire = () => {
+      notifyIdleTimeout(
+        "models",
+        () => {
+          settled = true;
+          disarmIdleTimer();
+          try { child.kill(); } catch {}
+          reject("Model list aborted (idle too long)");
+        },
+        () => armIdleTimer(onIdleFire),
+      );
+    };
     child.stdout.on("data", (chunk) => {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
@@ -708,7 +874,7 @@ ipcMain.handle("list_models", async () => {
           const v = JSON.parse(trimmed);
           if (v.type === "models" && Array.isArray(v.models)) {
             settled = true;
-            clearTimeout(timeout);
+            disarmIdleTimer();
             resolve(v.models);
             child.kill();
             return;
@@ -719,7 +885,7 @@ ipcMain.handle("list_models", async () => {
     child.on("error", (err) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      disarmIdleTimer();
       reject(String(err));
     });
     // Ensure the promise settles if the backend exits without a models event
@@ -727,9 +893,10 @@ ipcMain.handle("list_models", async () => {
     child.on("exit", (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      disarmIdleTimer();
       reject(`Model list failed (exit code ${code})`);
     });
+    armIdleTimer(onIdleFire);
   });
 });
 
@@ -745,7 +912,20 @@ ipcMain.handle("setup", async (event, key, model, backupKeep) => {
       env: { ...process.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
+    let settled = false;
     let buffer = "";
+    const onIdleFire = () => {
+      notifyIdleTimeout(
+        "setup",
+        () => {
+          settled = true;
+          disarmIdleTimer();
+          try { child.kill(); } catch {}
+          reject("Setup aborted (idle too long)");
+        },
+        () => armIdleTimer(onIdleFire),
+      );
+    };
     child.stdout.on("data", (chunk) => {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
@@ -759,6 +939,8 @@ ipcMain.handle("setup", async (event, key, model, backupKeep) => {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send("phar-event", v);
             }
+            settled = true;
+            disarmIdleTimer();
             resolve(!!v.ok);
             child.kill();
             return;
@@ -766,7 +948,20 @@ ipcMain.handle("setup", async (event, key, model, backupKeep) => {
         } catch {}
       }
     });
-    child.on("error", (err) => reject(String(err)));
+    child.on("error", (err) => {
+      settled = true;
+      disarmIdleTimer();
+      reject(String(err));
+    });
+    // Ensure the promise settles if the backend exits without a setup event
+    // (e.g. invalid key → error event + non-zero exit).
+    child.on("exit", (code) => {
+      if (settled) return;
+      settled = true;
+      disarmIdleTimer();
+      reject(`Setup failed (exit code ${code})`);
+    });
+    armIdleTimer(onIdleFire);
   });
 });
 
