@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   ActivityEntry,
+  ConversationTurn,
   DiffEntry,
   DiffEvent,
   ErrorEvent,
@@ -57,6 +58,11 @@ interface AppState {
   // --- prompt box ---
   lastPrompt: string;
   lastClarify: boolean;
+  // --- conversation log ---
+  conversation: ConversationTurn[];
+  addConversationTurn: (turn: ConversationTurn) => void;
+  clearConversation: () => void;
+
   // --- recent tours (quick links on the empty state) ---
   recentTours: RecentTour[];
 
@@ -106,8 +112,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   rateLimit: null,
   models: [],
   selectedModel: null,
-  modelsLoading: true,
+modelsLoading: true,
   modelsLoadFailed: false,
+  // --- conversation log ---
+  conversation: [],
+  // --- UI prefs ---
   theme: "system",
   showReasoning: false,
   lastPrompt: "",
@@ -157,6 +166,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setShowReasoning: (b) => set({ showReasoning: b }),
   setLastPrompt: (p, clarify) => set({ lastPrompt: p, lastClarify: clarify }),
   setRecentTours: (tours) => set({ recentTours: tours }),
+  // conversation log
+  addConversationTurn: (turn) => set((s) => ({ conversation: [...s.conversation, turn] })),
+  clearConversation: () => set({ conversation: [] }),
 
   applyPharEvent: (ev) => {
     const now = Date.now();
@@ -172,6 +184,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           // New edit run — clear previous diffs so the new run's diffs are clean.
           diffs: [],
         });
+        get().addConversationTurn({ kind: "model_done", timestamp: now });
         return;
       case "reasoning":
         if (!state.showReasoning) return;
@@ -186,6 +199,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             },
           ],
         });
+        get().addConversationTurn({ kind: "model_reasoning", text: ev.text, timestamp: now });
         return;
       case "tool":
         set({
@@ -203,10 +217,22 @@ export const useAppStore = create<AppState>((set, get) => ({
             },
           ],
         });
+        get().addConversationTurn({
+          kind: "model_tool",
+          toolName: ev.name,
+          file: ev.file,
+          query: ev.query,
+          bytes: ev.bytes,
+          ms: ev.ms,
+          timestamp: now,
+        });
         return;
       case "clarify":
         if (ev.status === "clarify") {
           set({ phase: "clarify", clarifyQuestion: ev.question ?? "" });
+          if (ev.question) {
+            get().addConversationTurn({ kind: "model_clarify_question", text: ev.question, timestamp: now });
+          }
         }
         // status:"clear" → no phase change, keep working.
         return;
@@ -215,6 +241,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         // Replace any existing entry for the same file (last write wins).
         const others = state.diffs.filter((x) => x.file !== d.file);
         set({ diffs: [...others, { file: d.file, hunks: d.hunks }] });
+        get().addConversationTurn({ kind: "model_diff", file: d.file, hunks: d.hunks, timestamp: now });
         return;
       }
       case "restored":
@@ -224,10 +251,12 @@ export const useAppStore = create<AppState>((set, get) => ({
           clarifyQuestion: null,
           runStartedAt: null,
         });
+        get().addConversationTurn({ kind: "model_restored", files: ev.files, timestamp: now });
         return;
       case "done":
         // Move to review only if we actually got diffs; otherwise idle.
         set({ phase: state.diffs.length > 0 ? "review" : "idle", runStartedAt: null });
+        get().addConversationTurn({ kind: "model_done", ms: ev.ms, timestamp: now });
         return;
       case "error": {
         const evTyped = ev as ErrorEvent;
@@ -253,6 +282,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             clarifyQuestion: null,
           });
         }
+        get().addConversationTurn({ kind: "model_error", message: evTyped.message, timestamp: now });
         return;
       }
       case "__stream_end__":

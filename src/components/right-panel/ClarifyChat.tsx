@@ -9,6 +9,7 @@ export function ClarifyChat() {
   const question = useAppStore((s) => s.clarifyQuestion);
   const setPhase = useAppStore((s) => s.setPhase);
   const endRun = useAppStore((s) => s.endRun);
+  const addConversationTurn = useAppStore((s) => s.addConversationTurn);
   const [answer, setAnswer] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -20,6 +21,7 @@ export function ClarifyChat() {
     setSending(true);
     try {
       await invoke("clarify_answer", trimmed);
+      addConversationTurn({ kind: "user_clarify_answer", text: trimmed, timestamp: Date.now() });
       setAnswer("");
       setPhase("working");
     } catch (err) {
@@ -35,6 +37,7 @@ export function ClarifyChat() {
     setSending(true);
     try {
       await invoke("clarify_answer", "skip");
+      addConversationTurn({ kind: "user_skip", timestamp: Date.now() });
       setAnswer("");
       endRun("idle");
     } catch (err) {

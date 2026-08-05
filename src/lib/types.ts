@@ -132,3 +132,17 @@ export interface ActivityEntry {
   // Common:
   timestamp: number;
 }
+
+// ----- Conversation log entries -----
+
+export type ConversationTurn =
+  | { kind: "user_prompt"; text: string; clarify: boolean; timestamp: number }
+  | { kind: "user_clarify_answer"; text: string; timestamp: number }
+  | { kind: "user_skip"; timestamp: number }
+  | { kind: "model_clarify_question"; text: string; timestamp: number }
+  | { kind: "model_reasoning"; text: string; timestamp: number }
+  | { kind: "model_tool"; toolName: string; file?: string; query?: string; bytes?: number; ms?: number; timestamp: number }
+  | { kind: "model_diff"; file: string; hunks: DiffHunk[]; timestamp: number }
+  | { kind: "model_done"; ms?: number; timestamp: number }
+  | { kind: "model_error"; message: string; timestamp: number }
+  | { kind: "model_restored"; files: string[]; timestamp: number };

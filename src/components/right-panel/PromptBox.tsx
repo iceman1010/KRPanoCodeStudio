@@ -12,6 +12,7 @@ export function PromptBox() {
   const setLastPrompt = useAppStore((s) => s.setLastPrompt);
   const clearActivity = useAppStore((s) => s.clearActivity);
   const clearDiffs = useAppStore((s) => s.clearDiffs);
+  const clearConversation = useAppStore((s) => s.clearConversation);
   const setError = useAppStore((s) => s.setError);
   const beginRun = useAppStore((s) => s.beginRun);
   const endRun = useAppStore((s) => s.endRun);
@@ -36,8 +37,11 @@ export function PromptBox() {
     setLastPrompt(prompt, clarify);
     clearDiffs();
     clearActivity();
+    clearConversation();
     setError(null);
     beginRun();
+    const now = Date.now();
+    useAppStore.getState().addConversationTurn({ kind: "user_prompt", text: prompt, clarify, timestamp: now });
     try {
       await invoke("send_prompt", { prompt, clarify, model: selectedModel });
     } catch (err) {

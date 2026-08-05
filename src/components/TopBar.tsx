@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Settings, FolderOpen, Circle, Loader2 } from "lucide-react";
+import { Settings, FolderOpen, Circle, Loader2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConversationLog } from "@/components/ConversationLog";
 import {
   Select,
   SelectContent,
@@ -120,6 +121,7 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
       <Button variant="ghost" size="icon" onClick={onOpenSettings} title="Settings">
         <Settings className="h-4 w-4" />
       </Button>
+      <ConversationLog />
     </header>
   );
 }
