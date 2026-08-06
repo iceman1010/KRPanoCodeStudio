@@ -9,6 +9,7 @@ import { IdleTimeoutModal } from "@/components/IdleTimeoutModal";
 import { RightPanel } from "@/components/right-panel/RightPanel";
 import { EmptyState } from "@/states/EmptyState";
 import { SettingsModal } from "@/modals/SettingsModal";
+import { HelpModal } from "@/components/HelpModal";
 import { useAppStore } from "@/stores/appStore";
 import { usePharStream } from "@/hooks/usePharStream";
 import { invoke } from "@/lib/electron";
@@ -40,6 +41,7 @@ export default function App() {
   const setModelsLoadFailed = useAppStore((s) => s.setModelsLoadFailed);
   const setRecentTours = useAppStore((s) => s.setRecentTours);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Load saved preferences and models on startup
   useEffect(() => {
@@ -83,9 +85,10 @@ export default function App() {
     return (
       <TooltipProvider>
         <div className="flex h-screen flex-col bg-background text-foreground">
-          <TopBar onOpenSettings={() => setSettingsOpen(true)} />
+          <TopBar onOpenSettings={() => setSettingsOpen(true)} onOpenHelp={() => setHelpOpen(true)} />
           <EmptyState />
           <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
+          <HelpModal open={helpOpen} onOpenChange={setHelpOpen} />
           <UpdateNotificationModal />
           <IdleTimeoutModal />
           <Toaster richColors position="bottom-right" />
@@ -97,7 +100,7 @@ export default function App() {
   return (
       <TooltipProvider>
         <div className="flex h-screen flex-col bg-background text-foreground">
-          <TopBar onOpenSettings={() => setSettingsOpen(true)} />
+          <TopBar onOpenSettings={() => setSettingsOpen(true)} onOpenHelp={() => setHelpOpen(true)} />
           <div className="flex-1 overflow-hidden">
           <Group orientation="horizontal" style={{ height: "100%" }}>
             <Panel defaultSize="60%" minSize="40%" style={{ overflow: "hidden" }}>
@@ -117,6 +120,7 @@ export default function App() {
           </Group>
         </div>
         <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
+          <HelpModal open={helpOpen} onOpenChange={setHelpOpen} />
         <UpdateNotificationModal />
           <IdleTimeoutModal />
         <Toaster richColors position="bottom-right" />

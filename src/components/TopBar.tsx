@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Settings, FolderOpen, Circle, Loader2, MessageSquare } from "lucide-react";
+import { Settings, FolderOpen, Circle, Loader2, MessageSquare, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ConversationLog } from "@/components/ConversationLog";
@@ -16,6 +16,7 @@ import { toast } from "sonner";
 
 interface TopBarProps {
   onOpenSettings: () => void;
+  onOpenHelp: () => void;
 }
 
 const PHASE_DOT: Record<string, string> = {
@@ -26,7 +27,7 @@ const PHASE_DOT: Record<string, string> = {
   clarify: "bg-violet-500 animate-pulse",
 };
 
-export function TopBar({ onOpenSettings }: TopBarProps) {
+export function TopBar({ onOpenSettings, onOpenHelp }: TopBarProps) {
   const tour = useAppStore((s) => s.tour);
   const phase = useAppStore((s) => s.phase);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -118,6 +119,9 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
           No API key
         </Badge>
       )}
+      <Button variant="ghost" size="icon" onClick={onOpenHelp} title="Help">
+        <HelpCircle className="h-4 w-4" />
+      </Button>
       <Button variant="ghost" size="icon" onClick={onOpenSettings} title="Settings">
         <Settings className="h-4 w-4" />
       </Button>

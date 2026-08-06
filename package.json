@@ -27,9 +27,11 @@
     "@fontsource-variable/geist": "5.2.9",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "dompurify": "^3.4.12",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
     "lucide-react": "1.25.0",
+    "marked": "^18.0.7",
     "radix-ui": "1.6.2",
     "react": "19.2.7",
     "react-dom": "19.2.7",
@@ -41,6 +43,7 @@
     "zustand": "5.0.14"
   },
   "devDependencies": {
+    "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "22.20.1",
     "@types/react": "19.2.17",
@@ -70,6 +73,10 @@
       {
         "from": "resources/krpanocode.phar",
         "to": "krpanocode.phar"
+      },
+      {
+        "from": "manual",
+        "to": "manual"
       }
     ],
     "linux": {

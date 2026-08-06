@@ -1,0 +1,86 @@
+# MkDocs configuration for the KRpanoCode Studio public manual.
+#
+# This publishes the same Markdown files shipped inside the desktop app to a
+# GitHub Pages wiki site, so the in-app Help and the public wiki are always
+# in sync (single source of truth: the `manual/` folder).
+#
+# Local preview:
+#   pip install mkdocs mkdocs-material
+#   mkdocs serve
+#   open http://127.0.0.1:8000
+#
+# The site is built and published automatically by `.github/workflows/docs.yml`
+# on every push to `main`.
+
+site_name: KRpanoCode Studio
+site_description: User manual for KRpanoCode Studio — a desktop app that edits KRPano virtual tour XML files using an LLM.
+site_url: https://iceman1010.github.io/KRpanoCodeStudio/
+repo_url: https://github.com/iceman1010/KRpanoCodeStudio
+repo_name: iceman1010/KRpanoCodeStudio
+edit_uri: edit/main/manual/
+
+docs_dir: manual
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - The interface: the-interface.md
+  - Editing tours: editing-tours.md
+  - Clarify mode: clarify.md
+  - What happens inside: what-happens-inside.md
+  - Settings: settings.md
+  - Troubleshooting: troubleshooting.md
+  - FAQ: faq.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - md_in_html
+
+plugins:
+  - search
+  - tags
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/iceman1010/KRpanoCodeStudio
+
+copyright: KRpanoCode Studio — private project, all rights reserved.

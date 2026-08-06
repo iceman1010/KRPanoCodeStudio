@@ -1,0 +1,70 @@
+# Builds and publishes the KRpanoCode Studio manual to GitHub Pages
+# using MkDocs Material. The Markdown source lives in `manual/` at the
+# repo root and is the **single source of truth** — the same files are
+# bundled into the desktop app for its in-app Help.
+#
+# Workflow based on the official MkDocs GitHub Pages recipe:
+# https://squidfunk.github.io/mkdocs-material/publishing-your-site/
+
+name: Build and publish the manual
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "manual/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install MkDocs Material
+        run: |
+          python -m pip install --upgrade pip
+          # Rolling latest — keep the docs site on the newest MkDocs + Material.
+          # Pinned to a major to avoid silent breaking-release churn: mkdocs 1.x,
+          # mkdocs-material 9.x. Update the floor here only when a new major lands.
+          pip install \
+            "mkdocs>=1.6,<2" \
+            "mkdocs-material>=9.5,<10"
+
+      - name: Build site
+        run: mkdocs build --strict
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

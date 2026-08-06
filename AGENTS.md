@@ -199,6 +199,30 @@ Detailed knowledge is split into focused docs:
 - **`docs/CICD.md`** — full release pipeline: version-gated trigger, build matrix, PHAR/PHP download, electron-builder config
 - **`docs/MOCKUP-TESTS.md`** — mock environment setup, NDJSON emulation, dev/testing workflow without API costs
 
+## User-Facing Help (Single Source of Truth)
+
+The **`manual/`** folder at the repo root is the **single source of truth** for
+all user-facing help. It is consumed in two places from the same Markdown files:
+
+1. **In-app Help modal** (`src/components/HelpModal.tsx`) — Vite bundles all
+   `manual/*.md` files at build time via `import.meta.glob`; the renderer
+   renders them with `marked` + `DOMPurify`. No runtime file access.
+2. **Public wiki site** — `mkdocs.yml` + `.github/workflows/docs.yml` publish
+   the same `manual/` folder to GitHub Pages on every push to `main`.
+
+Before editing help content:
+- Edit **only** `manual/*.md` files. Do not duplicate help text in source
+  code, settings text, or toast messages — point users to the manual instead.
+- Keep the sidebar order in `src/components/HelpModal.tsx` (`PAGES`) and the
+  MkDocs nav (`mkdocs.yml` `nav:`) in sync when you add or rename a page.
+  These two are declared copies of the page list; the manual files themselves
+  are the source of truth.
+- `docs/` is for **developer/backstage** notes (CICD, logging, mock, self-update).
+  `manual/` is for **end users**. Keep audiences separate.
+- The `manual/` folder is shipped in `extraResources` (packaged app) but the
+  renderer reads the bundled copy, not the on-disk one — runtime edits to the
+  packaged `manual/` folder have no effect on the in-app Help.
+
 ## Cross-References (Sister Project)
 
 The PHAR backend is developed in a separate repo. When changes touch the NDJSON contract or event handling:
