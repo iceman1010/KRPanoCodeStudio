@@ -70,7 +70,7 @@ export function HelpModal({ open, onOpenChange }: HelpModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] p-0">
+      <DialogContent className="max-w-[90vw] sm:max-w-[90vw] md:max-w-[90vw] max-h-[90vh] p-0">
         <DialogHeader className="border-b px-4 py-3 pr-12">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
