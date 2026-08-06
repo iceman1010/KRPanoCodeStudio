@@ -50,10 +50,11 @@ event list:
 | `reasoning` | A short note from the model between tool calls (e.g. *"I'll look at tour.xml first"*). | If "Show AI reasoning" is on in Settings, appends to the Activity log. |
 | `tool` | The model made a tool call — `read_file`, `docsearch`, or `write_file`. Includes the file, the query (for docsearch), bytes written, and wall-clock ms. | Appends a row to the **Activity log**. |
 | `clarify` | The AI has a question for you before going further. Carries `status: clear` (intent confirmed) or `status: clarify` (asks a question). | **Clarify panel** appears with the question; status turns violet. |
+| `retry` | The CLI's auto-retry loop is retrying an HTTP call that failed (gateway 524 etc.). Carries attempt N/M, the HTTP code, the delay before retry, a reason slug, and — when the upstream sent them — the response headers (`cf-ray`, `retry-after`, `server`, `cf-cache-status`). | Shows a "Retrying 1/2…" row in the Activity log and Conversation log. |
 | `diff` | The PHAR finished writing a file. Carries the file name and a list of hunks (line, context, old, new). | Renders a **diff card** in the bottom of the right panel, one per file. |
 | `done` | The edit finished. Optionally the total wall-clock duration in ms. | Status turns blue (`review`) if diffs exist; otherwise back to `idle`. |
 | `restored` | An undo restored the files. Lists the restored file paths and the backup they came from. | Clears diffs, status returns to `idle`. |
-| `error` | Something failed (rate limit, network, bad prompt). Carries a message and, for rate limits, reset time + retry-after seconds. | Shows the error banner, or a **Rate-limit** banner with countdown and Retry. |
+| `error` | Something failed (rate limit, network, bad prompt). Carries a message; for rate limits also `kind`, `model`, `reset_at`, `retry_after_seconds`; for any HTTP failure also `http_code`, `retry_attempts`, and `http_headers` (redacted — no `authorization`/`set-cookie`). | Shows the error banner; for 429 a **Rate-limit banner** with countdown and Retry; for 5xx a **blue Resume banner** (see Troubleshooting). |
 
 You can watch this stream any time by opening the **Conversation log** modal
 (the MessageSquare icon in the top bar) — it shows the full timeline of the
@@ -120,8 +121,18 @@ While it's retrying you'll see a small **"retry"** event in the stream and
 the Activity log — it's harmless, just keep waiting. If the retries are
 exhausted, you get a clear error event with the original message.
 
+Each retry event (and the final error event for HTTP failures) carries the
+**response headers** the upstream sent back — things like `cf-ray`,
+`retry-after`, `server`, `cf-cache-status`. The `authorization` header is
+stripped before the event leaves the PHAR, so no API key ever leaks. These
+headers also land in the app log file (`~/.config/krpanocode-studio/studio.log`
+on Linux) — useful when reporting a recurring proxy issue to your provider.
+
 This means most transient blips are invisible to you — you just see a run
 that took a bit longer than usual. Only real failures reach the error banner.
+For 5xx gateway failures specifically, the UI also shows a **blue Resume
+banner** that re-runs the same prompt from the clean backup; see
+**Troubleshooting → "Network hiccup" blue banner**.
 
 ---
 

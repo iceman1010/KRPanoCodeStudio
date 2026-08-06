@@ -5,6 +5,7 @@ import type {
   DiffEntry,
   DiffEvent,
   ErrorEvent,
+  LastEdit,
   Phase,
   PharEvent,
 } from "@/lib/types";
@@ -58,6 +59,19 @@ interface AppState {
   // --- prompt box ---
   lastPrompt: string;
   lastClarify: boolean;
+  // --- last edit snapshot (for Resume after transient failure) ---
+  // Kept in-memory only — lost on app restart. Cleared on `done` or new prompt.
+  lastEdit: LastEdit | null;
+  // Subset of lastEdit promoted to "resumable" state when a transient 5xx
+  // killed the run. Set on `error` events where httpCode >= 500 and lastEdit
+  // matches the current tour; cleared by beginEdit / done / openTour /
+  // closeTour / a successful resume. Decoupled from `error` so dismissing the
+  // error message does not drop the Resume button.
+  failedEdit: LastEdit | null;
+  // Best-effort capture of the most recent clarify answer. The CLI's clarify
+  // loop is multi-round; we want the LAST user_answer merged into the resume
+  // instruction. Reset to null at the start of each run (`beginRun`).
+  pendingClarifyAnswer: string | null;
   // --- conversation log ---
   conversation: ConversationTurn[];
   addConversationTurn: (turn: ConversationTurn) => void;
@@ -70,6 +84,14 @@ interface AppState {
   setPhase: (p: Phase) => void;
   beginRun: () => void;
   endRun: (p: Phase) => void;
+  // Seed the last-edit snapshot when a prompt is sent so a Resume button can
+  // re-issue the same intent after a transient 524/5xx failure. Caller passes
+  // the full run descriptor (prompt, clarify mode, model, folder).
+  beginEdit: (edit: Omit<LastEdit, "startedAt" | "clarifyAnswer">) => void;
+  // Re-issue the last edit as a fresh prompt. Returns the merged instruction
+  // string the caller should pass to send_prompt, or null when there is
+  // nothing to resume (no lastEdit, or the tour folder changed).
+  resumeLastEdit: () => string | null;
   openTour: (folder: string, previewUrl: string) => void;
   closeTour: () => void;
   clearActivity: () => void;
@@ -84,6 +106,11 @@ interface AppState {
   setShowReasoning: (b: boolean) => void;
   setLastPrompt: (p: string, clarify: boolean) => void;
   setRecentTours: (tours: RecentTour[]) => void;
+  // Attach the most recent user clarify answer to the in-flight lastEdit
+  // snapshot so a Resume after a transient failure can re-issue the same
+  // merged intent. No-op when there is no in-flight lastEdit (e.g. user typed
+  // an answer to a previous run's stale event).
+  setLastClarifyAnswer: (answer: string) => void;
 
   // The central event handler — dispatches any PHAR event into state changes.
   applyPharEvent: (ev: PharEvent) => void;
@@ -121,11 +148,40 @@ modelsLoading: true,
   showReasoning: false,
   lastPrompt: "",
   lastClarify: false,
+  // --- resume-after-failure snapshot (in-memory only) ---
+  lastEdit: null,
+  failedEdit: null,
+  pendingClarifyAnswer: null,
   recentTours: [],
 
   setPhase: (p) => set({ phase: p }),
   beginRun: () => set({ phase: "working", runStartedAt: Date.now() }),
   endRun: (p) => set({ phase: p, runStartedAt: null }),
+  // Seed lastEdit at the start of a run. pendingClarifyAnswer is reset so a
+  // leftover answer from a previous run can't bleed into this one. The
+  // clarifyAnswer field on lastEdit is filled in later by applyPharEvent when
+  // the user actually answers (status:"clear" or a user_clarify_answer turn).
+  // failedEdit is cleared too — a new prompt invalidates any prior Resume.
+  beginEdit: (edit) =>
+    set({
+      lastEdit: { ...edit, startedAt: Date.now(), clarifyAnswer: null },
+      failedEdit: null,
+      pendingClarifyAnswer: null,
+    }),
+  // Build the merged instruction for a resumed edit. Returns null when there
+  // is nothing to resume, or when the currently-open tour doesn't match the
+  // one the failed edit targeted (don't resume an edit on the wrong tour).
+  // Clears failedEdit so the Resume banner doesn't linger after firing.
+  resumeLastEdit: () => {
+    const s = get();
+    const e = s.failedEdit ?? s.lastEdit;
+    if (!e || !s.tour) return null;
+    if (s.tour.folder !== e.tourFolder) return null;
+    set({ failedEdit: null });
+    return e.clarifyAnswer
+      ? `${e.prompt}\n\nFollow-up clarification: ${e.clarifyAnswer}`
+      : e.prompt;
+  },
   openTour: (folder, previewUrl) =>
     set({
       tour: { folder, name: tourNameFromFolder(folder), previewUrl },
@@ -139,6 +195,9 @@ modelsLoading: true,
       clarifyQuestion: null,
       error: null,
       rateLimit: null,
+      lastEdit: null,
+      failedEdit: null,
+      pendingClarifyAnswer: null,
     }),
   closeTour: () =>
     set({
@@ -153,6 +212,9 @@ modelsLoading: true,
       clarifyQuestion: null,
       error: null,
       rateLimit: null,
+      lastEdit: null,
+      failedEdit: null,
+      pendingClarifyAnswer: null,
     }),
   clearActivity: () => set({ activity: [] }),
   clearDiffs: () => set({ diffs: [] }),
@@ -166,6 +228,12 @@ modelsLoading: true,
   setShowReasoning: (b) => set({ showReasoning: b }),
   setLastPrompt: (p, clarify) => set({ lastPrompt: p, lastClarify: clarify }),
   setRecentTours: (tours) => set({ recentTours: tours }),
+  setLastClarifyAnswer: (answer) => {
+    // Best-effort: only attach if lastEdit exists and is for the current tour.
+    const s = get();
+    if (!s.lastEdit || !s.tour || s.tour.folder !== s.lastEdit.tourFolder) return;
+    set({ lastEdit: { ...s.lastEdit, clarifyAnswer: answer } });
+  },
   // conversation log
   addConversationTurn: (turn) => set((s) => ({ conversation: [...s.conversation, turn] })),
   clearConversation: () => set({ conversation: [] }),
@@ -233,9 +301,35 @@ modelsLoading: true,
           if (ev.question) {
             get().addConversationTurn({ kind: "model_clarify_question", text: ev.question, timestamp: now });
           }
+        } else if (ev.status === "clear" && typeof ev.reason === "string") {
+          // AI restated the user's intent as the merged instruction; record it
+          // in the log so the conversation reads naturally. The user's literal
+          // answer (preserved separately in lastEdit.clarifyAnswer) is what we
+          // use for resume, not this restatement.
+          get().addConversationTurn({ kind: "model_clarify_clear", reason: ev.reason, timestamp: now });
         }
         // status:"clear" → no phase change, keep working.
         return;
+      case "retry": {
+        // PHAR is retrying the upstream HTTP call after a transient failure
+        // (524 etc.). Surface in the activity log + conversation log so the
+        // user sees "Retrying (2/3) in 4s…" rather than a silent gap. Don't
+        // touch phase: we're still "working".
+        const r = ev as unknown as {
+          attempt: number; maxAttempts: number; httpCode: number;
+          delayMs: number; reason: string;
+        };
+        get().addConversationTurn({
+          kind: "model_retry",
+          attempt: r.attempt,
+          maxAttempts: r.maxAttempts,
+          httpCode: r.httpCode,
+          delayMs: r.delayMs,
+          reason: r.reason,
+          timestamp: now,
+        });
+        return;
+      }
       case "diff": {
         const d: DiffEvent = ev;
         // Replace any existing entry for the same file (last write wins).
@@ -255,7 +349,14 @@ modelsLoading: true,
         return;
       case "done":
         // Move to review only if we actually got diffs; otherwise idle.
-        set({ phase: state.diffs.length > 0 ? "review" : "idle", runStartedAt: null });
+        set({
+          phase: state.diffs.length > 0 ? "review" : "idle",
+          runStartedAt: null,
+          // Clean exit — drop the resume snapshot so a stale Resume button
+          // can't appear after a successful edit.
+          lastEdit: null,
+          failedEdit: null,
+        });
         get().addConversationTurn({ kind: "model_done", ms: ev.ms, timestamp: now });
         return;
       case "error": {
@@ -270,7 +371,32 @@ modelsLoading: true,
                 retryAfterSeconds: evTyped.retry_after_seconds ?? null,
               }
             : null;
-        set({ error: evTyped.message, rateLimit: rl });
+        // Resumable = transient 5xx/gateway failure AND we have a lastEdit
+        // snapshot to resume from. CLI sends http_code when it knows it; fall
+        // back to scraping the message for "HTTP NNN" when it doesn't (older
+        // PHARs). 429 (rate_limit) is its own flow with its own Retry button —
+        // not resumable here.
+        const httpCode =
+          evTyped.http_code ??
+          (evTyped.kind === "rate_limit"
+            ? 429
+            : (() => {
+                const m = /HTTP (\d+)/.exec(evTyped.message);
+                return m ? Number(m[1]) : null;
+              })());
+        const isTransient = httpCode !== null && httpCode >= 500 && httpCode < 600;
+        const canResume =
+          evTyped.kind !== "rate_limit" &&
+          isTransient &&
+          !!state.lastEdit &&
+          // Don't offer resume on the wrong tour.
+          !!state.tour &&
+          state.tour.folder === state.lastEdit.tourFolder;
+        // Promote lastEdit → failedEdit so the Resume banner survives the
+        // user dismissing the error text below. Skipped when the error isn't
+        // resumable (then failedEdit stays null and no banner appears).
+        const failedEdit = canResume ? state.lastEdit : state.failedEdit;
+        set({ error: evTyped.message, rateLimit: rl, failedEdit });
         // If we were mid-edit or mid-clarify, fall back to review (so user can
         // undo) when diffs exist, otherwise idle. Without the clarify branch
         // here, a stream that dies while the user is typing an answer would
@@ -282,7 +408,14 @@ modelsLoading: true,
             clarifyQuestion: null,
           });
         }
-        get().addConversationTurn({ kind: "model_error", message: evTyped.message, timestamp: now });
+        get().addConversationTurn({
+          kind: "model_error",
+          message: evTyped.message,
+          resumable: canResume,
+          httpCode: httpCode ?? undefined,
+          retryAttempts: evTyped.retry_attempts,
+          timestamp: now,
+        });
         return;
       }
       case "__stream_end__":

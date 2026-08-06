@@ -665,6 +665,14 @@ function spawnPhar(args) {
           const evt = JSON.parse(trimmed);
           if (evt.type === "error") {
             lastErrorEvent = evt;
+            // Log the full error event (including http_code, http_headers, etc.)
+            // to the app log file so the user can dig into cf-ray / retry-after.
+            // The logger already prefixes with timestamp; we add a short category.
+            console.log("[phar-event:]", JSON.stringify(evt));
+          } else if (evt.type === "retry") {
+            // Also log retry events with their headers so the activity log is
+            // backed by a durable record.
+            console.log("[phar-event:]", JSON.stringify(evt));
           }
           if (evt.type === "clarify") {
             // Pause the idle timer while the PHAR waits for user input — we
@@ -851,6 +859,7 @@ ipcMain.handle("list_models", async () => {
     });
     let buffer = "";
     let settled = false;
+    let stderrBuffer = "";
     const onIdleFire = () => {
       notifyIdleTimeout(
         "models",
@@ -882,6 +891,12 @@ ipcMain.handle("list_models", async () => {
         } catch {}
       }
     });
+    // Capture stderr so we can surface a better error message when the PHAR
+    // exits with a non-zero code before emitting a models event.
+    child.stderr.on("data", (chunk) => {
+      stderrBuffer += chunk.toString();
+      console.error("[list_models] stderr:", chunk.toString().trim());
+    });
     child.on("error", (err) => {
       if (settled) return;
       settled = true;
@@ -894,7 +909,13 @@ ipcMain.handle("list_models", async () => {
       if (settled) return;
       settled = true;
       disarmIdleTimer();
-      reject(`Model list failed (exit code ${code})`);
+      // Surface the stderr tail so the user can see WHY it failed (e.g.
+      // "API key not found" vs a cryptic exit code).
+      const stderrTail = stderrBuffer.trim().slice(-500);
+      const msg = stderrTail
+        ? `Model list failed (exit code ${code}): ${stderrTail}`
+        : `Model list failed (exit code ${code})`;
+      reject(msg);
     });
     armIdleTimer(onIdleFire);
   });

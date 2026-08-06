@@ -9,18 +9,22 @@ import { toast } from "sonner";
 
 export function PromptBox() {
   const phase = useAppStore((s) => s.phase);
+  const tour = useAppStore((s) => s.tour);
   const setLastPrompt = useAppStore((s) => s.setLastPrompt);
   const clearActivity = useAppStore((s) => s.clearActivity);
   const clearDiffs = useAppStore((s) => s.clearDiffs);
   const clearConversation = useAppStore((s) => s.clearConversation);
   const setError = useAppStore((s) => s.setError);
   const beginRun = useAppStore((s) => s.beginRun);
+  const beginEdit = useAppStore((s) => s.beginEdit);
   const endRun = useAppStore((s) => s.endRun);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const elapsed = useRunElapsed();
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const tourFolder = tour?.folder ?? null;
 
   const disabled = phase === "working" || phase === "clarify";
 
@@ -39,6 +43,11 @@ export function PromptBox() {
     clearActivity();
     clearConversation();
     setError(null);
+    // Seed the resume snapshot BEFORE beginRun so applyPharEvent can rely on
+    // lastEdit being populated when the start event arrives.
+    if (tourFolder) {
+      beginEdit({ prompt, clarify, model: selectedModel, tourFolder });
+    }
     beginRun();
     const now = Date.now();
     useAppStore.getState().addConversationTurn({ kind: "user_prompt", text: prompt, clarify, timestamp: now });

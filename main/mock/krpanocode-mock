@@ -137,7 +137,23 @@ sleep_ms 500
 case "$PROMPT" in
     *ratelimit*|*429*|*rate_limit*)
         RESET_AT=$(date -u -d "+10 minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+10M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2026-12-31T23:59:59Z")
-        emit "{\"type\":\"error\",\"message\":\"Rate limit reached on glm-5.2-coding. Limit resets at ${RESET_AT}.\",\"kind\":\"rate_limit\",\"model\":\"glm-5.2-coding\",\"reset_at\":\"${RESET_AT}\",\"retry_after_seconds\":600}"
+        emit "{\"type\":\"error\",\"message\":\"Rate limit reached on glm-5.2-coding. Limit resets at ${RESET_AT}.\",\"kind\":\"rate_limit\",\"model\":\"glm-5.2-coding\",\"reset_at\":\"${RESET_AT}\",\"retry_after_seconds\":600,\"http_code\":429,\"http_headers\":{\"server\":\"cloudflare\",\"cf-ray\":\"8c1a2b3c4d5-LHR\",\"retry-after\":\"600\"}}"
+        exit 1
+        ;;
+esac
+
+# Gateway-timeout scenario: prompt containing "524", "gateway", or "timeout"
+# emits a realistic retry-exhausted sequence (two retry events + final error)
+# so the UI's Resume banner can be exercised against the mock backend.
+case "$PROMPT" in
+    *524*|*gateway*|*timeout*)
+        emit '{"type":"tool","name":"read_file","file":"tour.xml","ms":0}'
+        sleep_ms 100
+        emit '{"type":"retry","attempt":1,"maxAttempts":2,"httpCode":524,"delayMs":300,"reason":"gateway_timeout","httpHeaders":{"server":"cloudflare","cf-ray":"8c1a2b3c4d5-LHR","cf-cache-status":"DYNAMIC","retry-after":"120"}}'
+        sleep_ms 400
+        emit '{"type":"retry","attempt":2,"maxAttempts":2,"httpCode":524,"delayMs":600,"reason":"gateway_timeout","httpHeaders":{"server":"cloudflare","cf-ray":"8c1a2b3c4d6-LHR","cf-cache-status":"DYNAMIC","retry-after":"120"}}'
+        sleep_ms 700
+        emit '{"type":"error","message":"Edit failed: API error (HTTP 524): The API proxy timed out waiting for the upstream model (HTTP 524). This is a transient network issue, not an application error. Retrying typically resolves it.","http_code":524,"retry_attempts":2,"http_headers":{"server":"cloudflare","cf-ray":"8c1a2b3c4d7-LHR","cf-cache-status":"DYNAMIC","retry-after":"120"}}'
         exit 1
         ;;
 esac

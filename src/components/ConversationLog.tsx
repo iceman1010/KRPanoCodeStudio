@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Copy, MessageSquare, Loader2, FileText, Terminal, AlertCircle, CheckCircle, Clock } from "lucide-react";
+import { Copy, MessageSquare, Loader2, FileText, Terminal, AlertCircle, AlertTriangle, CheckCircle, Clock, RotateCw } from "lucide-react";
 import { invoke } from "@/lib/electron";
 import { useAppStore } from "@/stores/appStore";
 import type { ConversationTurn } from "@/lib/types";
@@ -106,6 +106,42 @@ function TurnRow({ turn }: { turn: ConversationTurn }) {
         </div>
       );
     }
+    case "model_clarify_clear": {
+      return (
+        <div className="mb-2 flex gap-3">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1 pl-6">
+            <div className="text-xs text-violet-600/80 dark:text-violet-400/80 mb-0.5">🤖 Clarify accepted</div>
+            <div className="bg-violet-50/30 dark:bg-violet-950/10 p-2 rounded-md border border-violet-200/30 dark:border-violet-800/30 text-sm italic text-muted-foreground whitespace-pre-wrap">
+              {turn.reason}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    case "model_retry": {
+      const delaySec = (turn.delayMs / 1000).toFixed(1);
+      return (
+        <div className="mb-2 flex gap-3">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+              <RotateCw className="h-3 w-3 animate-spin" style={{ animationDuration: "1.5s" }} />
+              <span className="font-medium">
+                Retrying {turn.attempt}/{turn.maxAttempts}
+              </span>
+              <span className="text-muted-foreground">HTTP {turn.httpCode}</span>
+              <span className="text-muted-foreground">· {turn.reason}</span>
+              <span className="text-muted-foreground">in {delaySec}s</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
     case "model_reasoning": {
       return (
         <div className="mb-2 flex gap-3">
@@ -185,9 +221,25 @@ function TurnRow({ turn }: { turn: ConversationTurn }) {
             {formatTime(turn.timestamp)}
           </div>
           <div className="flex-1">
-            <div className="flex items-center gap-2 text-sm">
-              <AlertCircle className="h-4 w-4 text-destructive" />
+            <div className="flex items-center gap-2 text-sm flex-wrap">
+              <AlertCircle className="h-4 w-4 text-destructive flex-shrink-0" />
               <span className="font-medium text-destructive">Error</span>
+              {typeof turn.httpCode === "number" && (
+                <span className="text-[10px] px-1.5 py-0.5 bg-destructive/10 text-destructive rounded border border-destructive/20 font-mono">
+                  HTTP {turn.httpCode}
+                </span>
+              )}
+              {typeof turn.retryAttempts === "number" && turn.retryAttempts > 0 && (
+                <span className="text-[10px] text-muted-foreground">
+                  after {turn.retryAttempts} CLI attempt{turn.retryAttempts === 1 ? "" : "s"}
+                </span>
+              )}
+              {turn.resumable && (
+                <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 rounded">
+                  <AlertTriangle className="h-2.5 w-2.5" />
+                  Resumable
+                </span>
+              )}
             </div>
             <div className="ml-6 mt-1 p-2 bg-destructive/10 border border-destructive/20 rounded text-sm text-destructive font-mono">
               {turn.message}
@@ -241,8 +293,12 @@ export function ConversationLog() {
           return `[${time}] You (skip): Clarification skipped — edit rolled back`;
         case "model_clarify_question":
           return `[${time}] Model (clarify): ${t.text}`;
+        case "model_clarify_clear":
+          return `[${time}] Model (clarify accepted): ${t.reason}`;
         case "model_reasoning":
           return `[${time}] Model (reasoning): ${t.text}`;
+        case "model_retry":
+          return `[${time}] Retry: attempt ${t.attempt}/${t.maxAttempts} (HTTP ${t.httpCode}, ${t.reason}, in ${(t.delayMs / 1000).toFixed(1)}s)`;
         case "model_tool":
           return `[${time}] Tool: ${t.toolName}${t.file ? ` ${t.file}` : ""}${t.query ? ` "${t.query}"` : ""}${typeof t.bytes === "number" ? ` ${t.bytes}B` : ""}${typeof t.ms === "number" ? ` ${(t.ms / 1000).toFixed(1)}s` : ""}`;
         case "model_diff":
@@ -250,7 +306,7 @@ export function ConversationLog() {
         case "model_done":
           return `[${time}] Done${typeof t.ms === "number" ? ` in ${(t.ms / 1000).toFixed(1)}s` : ""}`;
         case "model_error":
-          return `[${time}] Error: ${t.message}`;
+          return `[${time}] Error${typeof t.httpCode === "number" ? ` (HTTP ${t.httpCode})` : ""}${typeof t.retryAttempts === "number" && t.retryAttempts > 0 ? ` [after ${t.retryAttempts} CLI attempts]` : ""}${t.resumable ? " [resumable]" : ""}: ${t.message}`;
         case "model_restored":
           return `[${time}] Restored: ${t.files.join(", ")}`;
       }

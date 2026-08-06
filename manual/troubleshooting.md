@@ -48,6 +48,35 @@ happens often, talk to your proxy administrator about raising your tier.
 
 ---
 
+## "Network hiccup" blue banner (Resume edit)
+
+When the API proxy times out waiting for the upstream model — usually an HTTP
+**524**, but also any 5xx gateway response — the CLI's automatic retry policy
+exhausts its attempts and the edit is rolled back to the last clean backup.
+
+The app then shows a **blue "Network hiccup blocked the edit" banner** with a
+**Resume edit** button. Clicking it re-runs the same prompt (and your
+clarification answer, if any) from the clean backup. No state is lost: you
+don't have to retype the prompt or re-do the clarify round-trip.
+
+- **Resume vs. Retry (rate limit)**: the rate-limit banner is for 429 with a
+  countdown; the Resume banner is for 5xx with no countdown. They never both
+  appear at the same time.
+- **Files on disk are safe** — when the failure happened, the CLI silently
+  restored the backup, so nothing is half-applied.
+- **If the upstream is still down**, Resume will fail the same way. Wait a
+  minute and try again. The CLI's own auto-retry already failed twice before
+  this banner appears, so a Resume on a healthy network is the right move.
+- **Dismiss the banner** with the × button — the Resume is then gone for that
+  run (you can still Undo from the diff review if any diffs landed).
+
+The full HTTP response headers (`cf-ray`, `server`, `retry-after`,
+`cf-cache-status`, etc.) from the failing request are recorded in the app log
+file — see "Where is the log file?" below. Include those when reporting a
+recurring gateway issue to your proxy provider.
+
+---
+
 ## "PHAR exited with code 1" and no stderr
 
 The CLI failed but didn't print an error message either. Most often:

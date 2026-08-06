@@ -10,6 +10,7 @@ export function ClarifyChat() {
   const setPhase = useAppStore((s) => s.setPhase);
   const endRun = useAppStore((s) => s.endRun);
   const addConversationTurn = useAppStore((s) => s.addConversationTurn);
+  const setLastClarifyAnswer = useAppStore((s) => s.setLastClarifyAnswer);
   const [answer, setAnswer] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -21,6 +22,11 @@ export function ClarifyChat() {
     setSending(true);
     try {
       await invoke("clarify_answer", trimmed);
+      // Stash the user's literal answer on the resume snapshot so a Resume
+      // after a transient failure can re-issue the same merged intent. The
+      // CLI's `clarify status:"clear"` event that follows confirms the AI
+      // accepted the answer; we don't wait for it here.
+      setLastClarifyAnswer(trimmed);
       addConversationTurn({ kind: "user_clarify_answer", text: trimmed, timestamp: Date.now() });
       setAnswer("");
       setPhase("working");
