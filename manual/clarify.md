@@ -69,6 +69,15 @@ Here's the flow, step by step:
    amber, the AI proceeds with the edit using your answer as additional
    context, and you eventually reach the diff review as usual.
 
+> **The clarify verdict is carried forward.** When the AI says *"clear"* it
+> produces a one-line reason like *"I will change the `title` of scene X in
+> `tour.xml`"*. That reason is appended to the edit instruction as an
+> explicit anchor (a `Target identified during clarification:` line) so the
+> edit phase doesn't second-guess the target. You don't see this line in the
+> UI, but it's why the edit phase now reliably targets the file the clarify
+> phase named — even on multi-file tours where the edit phase otherwise only
+> sees a list of paths.
+
 ---
 
 ## Skip & cancel

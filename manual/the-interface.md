@@ -43,7 +43,7 @@ quick tour of each.
 |-------|-------|---------|
 | Grey    | `empty`   | No tour loaded. |
 | Green   | `idle`    | A tour is open and the app is ready for a prompt. |
-| Amber (pulsing) | `working` | An edit is in progress — the AI is reading/writing files. |
+| Amber (pulsing) | `working` | An edit is in progress — the AI is reading/writing files. Also shown while awaiting your decision on a **Plan files** or **Validation retry** banner. |
 | Violet (pulsing) | `clarify` | The AI has a question for you; answer it in the violet panel. |
 | Blue    | `review`  | An edit finished; review the diff and choose Keep or Undo. |
 
@@ -95,6 +95,20 @@ When the AI has a follow-up question, this panel appears between the prompt
 box and the Files summary. Answer in the text area and click **Send answer**
 (or Skip & cancel to abort). See [Clarify](clarify.md) for the full flow.
 
+### Plan files banner (amber, only when the AI asks to pre-read)
+On multi-file edits, the AI may propose a set of files it wants to read
+before editing. An amber **Plan files** banner appears (between the prompt
+box and the Files summary) listing the proposed files and the AI's reason.
+**Approve** to let it pre-read them in bulk; **Decline** to make it fall
+back to individual `read_file` calls for just what it needs. The edit
+continues either way. See [What happens inside](what-happens-inside.md).
+
+### Validation retry banner (amber, only when the AI produced invalid XML)
+If the AI's edit fails XML validation, an amber **Validation retry** banner
+appears with the error details (file, line, message — collapsible). **Retry
+fix** feeds the validation errors back to the AI and lets it self-correct
+(up to 3 times); **Abort** rolls back and exits.
+
 ### Files summary
 A collapsible list of every file the CLI inspected for this tour, split into:
 
@@ -107,7 +121,8 @@ Click the row to expand/collapse.
 ### Activity log
 A live view of what the AI is doing, as it happens:
 
-- **Tool calls** — `read_file tour.xml`, `docsearch "scene title"`,
+- **Tool calls** — `plan_files tour.xml, panel.xml` (only on multi-file edits
+  where the AI asks first), `read_file tour.xml`, `docsearch "scene title"`,
   `write_file tour.xml (8,494 B)`. Each shows the wall-clock time it took.
 - **Reasoning** lines — short italic notes the model emitted between tool
   calls. These are off by default; turn them on in

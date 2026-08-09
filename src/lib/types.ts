@@ -11,6 +11,8 @@ export type PharEvent =
   | RestoredEvent
   | ErrorEvent
   | RetryEvent
+  | ValidationRetryEvent
+  | PlanFilesEvent
   | StreamEndEvent
   | VersionEvent
   | ModelsEvent
@@ -32,11 +34,14 @@ export interface ReasoningEvent {
 
 export interface ToolEvent {
   type: "tool";
-  name: string; // "read_file" | "write_file" | "docsearch" | ...
+  name: string; // "read_file" | "write_file" | "docsearch" | "plan_files" | ...
   file?: string;
   query?: string;
   bytes?: number;
   ms?: number;
+  // Only for name === "plan_files": the requested files + model's reason.
+  files?: string[];
+  reason?: string;
 }
 
 export interface DiffHunk {
@@ -109,6 +114,39 @@ export interface RetryEvent {
   http_headers?: Record<string, string>;
 }
 
+/**
+ * Emitted when the LLM produces invalid XML. The CLI blocks on stdin waiting
+ * for the user's decision ("yes"/"y" to retry with the error fed back to the
+ * model, anything else to abort). Mirrors the clarify stdin pattern.
+ * See PLAN-JSON-MODE.md "Validation retry".
+ */
+export interface ValidationRetryEvent {
+  type: "validation_retry";
+  status: "ask" | "retry" | "abort";
+  attempt: number;
+  maxAttempts: number;
+  kind?: "xml_validation";
+  file?: string;
+  line?: number | null;
+  message?: string;
+  details?: { line: number; message: string }[];
+}
+
+/**
+ * Emitted when the LLM calls the `plan_files` tool to declare which files it
+ * intends to read/edit. The CLI intercepts the tool call and blocks on stdin
+ * waiting for the user's decision ("yes"/"y" to approve and inline the file
+ * contents, anything else to decline so the model falls back to read_file).
+ * Mirrors the clarify/validation_retry stdin pattern.
+ * See PLAN-JSON-MODE.md "Plan files (user-gated pre-read)".
+ */
+export interface PlanFilesEvent {
+  type: "plan_files";
+  status: "ask" | "yes" | "no";
+  files?: string[];      // present on ask
+  reason?: string;       // present on ask; also present on no (decline reason)
+}
+
 // Synthetic event emitted by the Rust streamer when stdout closes (process exited).
 export interface StreamEndEvent {
   type: "__stream_end__";
@@ -152,6 +190,9 @@ export interface ActivityEntry {
   query?: string;
   bytes?: number;
   ms?: number;
+  // For plan_files tool entries:
+  files?: string[];
+  reason?: string;
   // For reasoning entries:
   text?: string;
   // Common:
@@ -167,11 +208,19 @@ export type ConversationTurn =
   | { kind: "model_clarify_question"; text: string; timestamp: number }
   | { kind: "model_clarify_clear"; reason: string; timestamp: number }
   | { kind: "model_reasoning"; text: string; timestamp: number }
-  | { kind: "model_tool"; toolName: string; file?: string; query?: string; bytes?: number; ms?: number; timestamp: number }
-  | { kind: "model_retry"; attempt: number; maxAttempts: number; httpCode: number; delayMs: number; reason: string; timestamp: number }
+  | { kind: "model_tool"; toolName: string; file?: string; query?: string; bytes?: number; ms?: number; files?: string[]; reason?: string; timestamp: number }
+  | { kind: "model_retry"; attempt: number; maxAttempts: number; httpCode: number; delayMs: number; reason: string; httpHeaders?: Record<string, string>; timestamp: number }
+  | { kind: "model_validation_error"; message: string; file?: string; line?: number | null; details?: { line: number; message: string }[]; attempt: number; maxAttempts: number; timestamp: number }
+  | { kind: "model_validation_retry"; attempt: number; maxAttempts: number; timestamp: number }
+  | { kind: "user_validation_retry_yes"; attempt: number; timestamp: number }
+  | { kind: "user_validation_retry_no"; attempt: number; timestamp: number }
+  | { kind: "model_plan_files_ask"; files: string[]; reason: string; timestamp: number }
+  | { kind: "user_plan_files_yes"; files: string[]; timestamp: number }
+  | { kind: "user_plan_files_no"; files: string[]; reason: string; timestamp: number }
+  | { kind: "model_plan_files_result"; approved: boolean; timestamp: number }
   | { kind: "model_diff"; file: string; hunks: DiffHunk[]; timestamp: number }
   | { kind: "model_done"; ms?: number; timestamp: number }
-  | { kind: "model_error"; message: string; resumable?: boolean; httpCode?: number; retryAttempts?: number; timestamp: number }
+  | { kind: "model_error"; message: string; resumable?: boolean; httpCode?: number; retryAttempts?: number; httpHeaders?: Record<string, string>; timestamp: number }
   | { kind: "model_restored"; files: string[]; timestamp: number };
 
 /**

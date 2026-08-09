@@ -9,6 +9,8 @@ import { ClarifyChat } from "@/components/right-panel/ClarifyChat";
 import { ActionBar } from "@/components/right-panel/ActionBar";
 import { RateLimitBanner } from "@/components/right-panel/RateLimitBanner";
 import { ResumeBanner } from "@/components/right-panel/ResumeBanner";
+import { ValidationRetryBanner } from "@/components/right-panel/ValidationRetryBanner";
+import { PlanFilesBanner } from "@/components/right-panel/PlanFilesBanner";
 
 export function RightPanel() {
   const phase = useAppStore((s) => s.phase);
@@ -23,6 +25,8 @@ export function RightPanel() {
       {phase === "clarify" && <ClarifyChat />}
       {rateLimit && <RateLimitBanner />}
       {failedEdit && <ResumeBanner />}
+      <PlanFilesBanner />
+      <ValidationRetryBanner />
       {error && !rateLimit && phase !== "review" && (
         <div className="flex items-start gap-2 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive">
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />

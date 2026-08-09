@@ -48,8 +48,10 @@ event list:
 |-------|---------------|------------------|
 | `start` | The PHAR has read your tour and made a backup. Sends the tour name, the backup path, and the editable/locked file lists. | Stores the backup path, populates the **Files summary**, shows `working`. |
 | `reasoning` | A short note from the model between tool calls (e.g. *"I'll look at tour.xml first"*). | If "Show AI reasoning" is on in Settings, appends to the Activity log. |
-| `tool` | The model made a tool call — `read_file`, `docsearch`, or `write_file`. Includes the file, the query (for docsearch), bytes written, and wall-clock ms. | Appends a row to the **Activity log**. |
+| `tool` | The model made a tool call — `plan_files`, `read_file`, `docsearch`, or `write_file`. Includes the file, the query (for docsearch), bytes written, and wall-clock ms. | Appends a row to the **Activity log**. |
+| `plan_files` | The AI wants to pre-read a set of files before editing and is asking you to confirm. Carries the file list + a short reason. | **Plan files panel** appears with the proposed files and reason; you Approve or Decline. Status turns amber while waiting. |
 | `clarify` | The AI has a question for you before going further. Carries `status: clear` (intent confirmed) or `status: clarify` (asks a question). | **Clarify panel** appears with the question; status turns violet. |
+| `validation_retry` | The AI produced XML that failed validation. Carries the error, the failing file/line, and an ask/retry/abort status. | **Validation retry banner** appears with the error details and Retry / Abort buttons. |
 | `retry` | The CLI's auto-retry loop is retrying an HTTP call that failed (gateway 524 etc.). Carries attempt N/M, the HTTP code, the delay before retry, a reason slug, and — when the upstream sent them — the response headers (`cf-ray`, `retry-after`, `server`, `cf-cache-status`). | Shows a "Retrying 1/2…" row in the Activity log and Conversation log. |
 | `diff` | The PHAR finished writing a file. Carries the file name and a list of hunks (line, context, old, new). | Renders a **diff card** in the bottom of the right panel, one per file. |
 | `done` | The edit finished. Optionally the total wall-clock duration in ms. | Status turns blue (`review`) if diffs exist; otherwise back to `idle`. |
@@ -102,6 +104,37 @@ When you click **Send answer**, the app writes your text to the PHAR's
 input, the PHAR adds your answer as extra context for the editing call, and
 the edit continues. If you click **Skip & cancel**, the app writes `"skip"`
 and the PHAR aborts cleanly. Nothing is written to your files.
+
+---
+
+## The Plan-files round-trip (a bit more detail)
+
+For non-trivial multi-file edits, the AI may emit a `plan_files` event **after**
+the start event (and after clarify, if used) and **before** any `read_file`/
+`write_file`. It's the AI saying: *"Here are the files I think I need to read
+to do this edit — OK?"* You see an amber **Plan files** panel listing the
+proposed files and the AI's one-sentence reason.
+
+- Click **Approve** and the app writes `"yes"` to the PHAR's stdin. The PHAR
+  returns the **full content of every approved file** to the AI as one block,
+  so it doesn't need separate `read_file` calls for those files. The edit
+  continues.
+- Click **Decline** and the app writes `"no"`. The AI receives a "User
+  declined" message and falls back to individual `read_file` calls for just
+  the files it most needs. The edit still continues — you're declining the
+  bulk pre-read, not the edit itself.
+
+The AI is told to call `plan_files` only when the edit genuinely benefits from
+confirmation (multi-file edits, ambiguous targets) and to skip it for trivial
+single-file edits where the target is obvious. So you won't see this panel on
+every run — only when the AI thinks it's worth checking with you first.
+
+**Why this exists:** when the AI only sees a list of file paths (no contents),
+it sometimes picks the wrong file to edit — e.g. it once changed a title colour
+in `skin/vtourskin.xml` when the actual target was the `textnames` style in
+`panel.xml`. The plan-files step shows you what the AI is about to anchor on,
+and the rich manifest hints (see below) help the AI pick correctly in the
+first place.
 
 ---
 
@@ -193,12 +226,23 @@ installed it; the PHAR is bundled inside the app's resources.
 You might wonder what the model "sees" when you send a prompt:
 
 - It sees your **prompt**.
-- It sees the **contents of your editable files** (it asks the PHAR to read
-  them via tool calls — that's the `read_file` rows in the Activity log).
+- It sees a **structural manifest** of your editable files — not just paths
+  and sizes, but also bracketed hints per file like
+  `[defines-styles:textnames]` (this file defines the `textnames` style),
+  `[uses-styles:textnames]` (this file references it), and `[align:bottomleft]`
+  (positional cues). This helps the AI target the right file without reading
+  every candidate.
+- It sees the **contents of your editable files** — either by asking the PHAR
+  to read them via `read_file` tool calls (that's the `read_file` rows in the
+  Activity log), or in bulk via the `plan_files` round-trip above.
 - It sees **relevant KRPano documentation** that the PHAR pulls in via
   `docsearch` from the 27 curated 1.23.3 docs bundled with the CLI. This
   makes the AI smarter about krpano-specific element names and attributes.
-- It sees any **Clarify answer** you gave.
+- It sees any **Clarify answer** you gave, plus — when Clarify was used —
+  the **target identification** the AI itself produced at clarify time
+  (e.g. *"I will change the `textnames` style in `panel.xml`"*). This is
+  carried forward as an explicit anchor so the edit phase doesn't second-
+  guess the target the clarify phase already nailed down.
 
 It **doesn't** see:
 

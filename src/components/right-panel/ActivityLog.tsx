@@ -17,6 +17,9 @@ function ToolRow({ entry }: { entry: ActivityEntry }) {
       <ToolIcon name={entry.toolName ?? ""} />
       <span className="font-mono">{entry.toolName}</span>
       {entry.file && <span className="font-mono text-muted-foreground">{entry.file}</span>}
+      {entry.files && entry.files.length > 0 && (
+        <span className="truncate text-muted-foreground">{entry.files.join(", ")}</span>
+      )}
       {entry.query && (
         <span className="truncate text-muted-foreground">"{entry.query}"</span>
       )}

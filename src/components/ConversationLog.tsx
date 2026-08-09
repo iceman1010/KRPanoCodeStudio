@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Copy, MessageSquare, Loader2, FileText, Terminal, AlertCircle, AlertTriangle, CheckCircle, Clock, RotateCw } from "lucide-react";
+import { Copy, MessageSquare, Loader2, FileText, Terminal, AlertCircle, AlertTriangle, CheckCircle, Clock, RotateCw, FileSearch, Check, X } from "lucide-react";
 import { invoke } from "@/lib/electron";
 import { useAppStore } from "@/stores/appStore";
 import type { ConversationTurn } from "@/lib/types";
@@ -22,6 +22,31 @@ function ToolIcon({ name, className }: { name: string; className?: string }) {
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+/** Format headers as a compact single-line suffix for the copied transcript. */
+function formatHeadersForTranscript(headers: Record<string, string>): string {
+  const pairs = Object.entries(headers).map(([k, v]) => `${k}=${v}`);
+  return ` | headers: ${pairs.join(", ")}`;
+}
+
+/** Collapsible HTTP response headers — collapsed by default to avoid clutter. */
+function HttpHeadersDetails({ headers, className }: { headers: Record<string, string>; className?: string }) {
+  return (
+    <details className={cn("text-xs", className)}>
+      <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
+        Response headers ({Object.keys(headers).length})
+      </summary>
+      <dl className="mt-1 ml-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+        {Object.entries(headers).map(([name, value]) => (
+          <div key={name} className="flex gap-2">
+            <dt className="text-foreground/70">{name}:</dt>
+            <dd className="break-all">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
 }
 
 function TurnRow({ turn }: { turn: ConversationTurn }) {
@@ -138,6 +163,163 @@ function TurnRow({ turn }: { turn: ConversationTurn }) {
               <span className="text-muted-foreground">· {turn.reason}</span>
               <span className="text-muted-foreground">in {delaySec}s</span>
             </div>
+            {turn.httpHeaders && Object.keys(turn.httpHeaders).length > 0 && (
+              <HttpHeadersDetails headers={turn.httpHeaders} />
+            )}
+          </div>
+        </div>
+      );
+    }
+    case "model_validation_error": {
+      return (
+        <div className="mb-2 flex gap-3">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+              <AlertTriangle className="h-3 w-3" />
+              <span className="font-medium">
+                Invalid XML — attempt {turn.attempt}/{turn.maxAttempts}
+              </span>
+            </div>
+            <div className="ml-6 mt-1 p-2 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-800/50 rounded text-sm text-amber-900 dark:text-amber-100 font-mono">
+              {turn.message}
+            </div>
+            {turn.details && turn.details.length > 0 && (
+              <ul className="ml-6 mt-1 space-y-0.5 text-xs text-muted-foreground">
+                {turn.details.slice(0, 5).map((d, i) => (
+                  <li key={i}>Line {d.line}: {d.message}</li>
+                ))}
+                {turn.details.length > 5 && (
+                  <li className="italic">…and {turn.details.length - 5} more</li>
+                )}
+              </ul>
+            )}
+          </div>
+        </div>
+      );
+    }
+    case "model_validation_retry": {
+      return (
+        <div className="mb-2 flex gap-3">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300">
+              <RotateCw className="h-3 w-3 animate-spin" style={{ animationDuration: "1.5s" }} />
+              <span className="font-medium">
+                Validation retry {turn.attempt}/{turn.maxAttempts}
+              </span>
+              <span className="text-muted-foreground">asking LLM to fix…</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    case "user_validation_retry_yes": {
+      return (
+        <div className="mb-2 flex gap-3 ml-6">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-medium text-primary">You</span>
+              <span className="px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 rounded">
+                Retry fix
+              </span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    case "user_validation_retry_no": {
+      return (
+        <div className="mb-2 flex gap-3 ml-6">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-medium text-destructive">You</span>
+              <span className="px-1.5 py-0.5 text-[10px] bg-destructive/10 text-destructive rounded">
+                Abort
+              </span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    case "model_plan_files_ask": {
+      return (
+        <div className="mb-2 flex gap-3">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+              <FileSearch className="h-3 w-3" />
+              <span className="font-medium">Plan files — proposed pre-read</span>
+            </div>
+            <div className="ml-6 mt-1 text-sm text-foreground">{turn.reason}</div>
+            <ul className="ml-6 mt-1 space-y-0.5 text-xs text-muted-foreground">
+              {turn.files.map((f) => (
+                <li key={f} className="font-mono">{f}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      );
+    }
+    case "user_plan_files_yes": {
+      return (
+        <div className="mb-2 flex gap-3 ml-6">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-medium text-primary">You</span>
+              <span className="px-1.5 py-0.5 text-[10px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 rounded inline-flex items-center gap-1">
+                <Check className="h-2.5 w-2.5" /> Approve pre-read
+              </span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    case "user_plan_files_no": {
+      return (
+        <div className="mb-2 flex gap-3 ml-6">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-medium text-muted-foreground">You</span>
+              <span className="px-1.5 py-0.5 text-[10px] bg-muted text-muted-foreground rounded inline-flex items-center gap-1">
+                <X className="h-2.5 w-2.5" /> Decline pre-read
+              </span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    case "model_plan_files_result": {
+      return (
+        <div className="mb-2 flex gap-3">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {turn.approved ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+              <span className="font-medium">
+                {turn.approved ? "Pre-read approved — files inlined" : "Pre-read declined — falling back to read_file"}
+              </span>
+            </div>
           </div>
         </div>
       );
@@ -164,16 +346,22 @@ function TurnRow({ turn }: { turn: ConversationTurn }) {
             {formatTime(turn.timestamp)}
           </div>
           <div className="flex-1">
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-2 text-xs flex-wrap">
               <ToolIcon name={turn.toolName} className="text-muted-foreground" />
               <span className="font-mono font-medium">{turn.toolName}</span>
               {turn.file && <span className="text-muted-foreground">{turn.file}</span>}
+              {turn.files && turn.files.length > 0 && (
+                <span className="text-muted-foreground">{turn.files.join(", ")}</span>
+              )}
               {turn.query && <span className="text-muted-foreground truncate max-w-[200px]">"{turn.query}"</span>}
               {typeof turn.bytes === "number" && (
                 <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded border">{turn.bytes} B</span>
               )}
               {typeof turn.ms === "number" && <span className="text-[10px] text-muted-foreground">{(turn.ms / 1000).toFixed(1)}s</span>}
             </div>
+            {turn.toolName === "plan_files" && turn.reason && (
+              <div className="ml-6 mt-0.5 text-xs text-muted-foreground italic">{turn.reason}</div>
+            )}
           </div>
         </div>
       );
@@ -244,6 +432,9 @@ function TurnRow({ turn }: { turn: ConversationTurn }) {
             <div className="ml-6 mt-1 p-2 bg-destructive/10 border border-destructive/20 rounded text-sm text-destructive font-mono">
               {turn.message}
             </div>
+            {turn.httpHeaders && Object.keys(turn.httpHeaders).length > 0 && (
+              <HttpHeadersDetails headers={turn.httpHeaders} className="ml-6 mt-1" />
+            )}
           </div>
         </div>
       );
@@ -298,15 +489,31 @@ export function ConversationLog() {
         case "model_reasoning":
           return `[${time}] Model (reasoning): ${t.text}`;
         case "model_retry":
-          return `[${time}] Retry: attempt ${t.attempt}/${t.maxAttempts} (HTTP ${t.httpCode}, ${t.reason}, in ${(t.delayMs / 1000).toFixed(1)}s)`;
+          return `[${time}] Retry: attempt ${t.attempt}/${t.maxAttempts} (HTTP ${t.httpCode}, ${t.reason}, in ${(t.delayMs / 1000).toFixed(1)}s)${t.httpHeaders ? formatHeadersForTranscript(t.httpHeaders) : ""}`;
+        case "model_validation_error":
+          return `[${time}] Invalid XML (attempt ${t.attempt}/${t.maxAttempts}): ${t.message}${t.file ? ` [${t.file}${typeof t.line === "number" ? `:${t.line}` : ""}]` : ""}${t.details ? ` (${t.details.length} errors)` : ""}`;
+        case "model_validation_retry":
+          return `[${time}] Validation retry ${t.attempt}/${t.maxAttempts}: asking LLM to fix…`;
+        case "user_validation_retry_yes":
+          return `[${time}] You (retry fix): accepted validation retry attempt ${t.attempt}`;
+        case "user_validation_retry_no":
+          return `[${time}] You (abort): declined validation retry attempt ${t.attempt}`;
+        case "model_plan_files_ask":
+          return `[${time}] Plan files (ask): ${t.reason} [${t.files.join(", ")}]`;
+        case "user_plan_files_yes":
+          return `[${time}] You (approve pre-read): [${t.files.join(", ")}]`;
+        case "user_plan_files_no":
+          return `[${time}] You (decline pre-read): ${t.reason} [${t.files.join(", ")}]`;
+        case "model_plan_files_result":
+          return `[${time}] Plan files ${t.approved ? "approved" : "declined"}`;
         case "model_tool":
-          return `[${time}] Tool: ${t.toolName}${t.file ? ` ${t.file}` : ""}${t.query ? ` "${t.query}"` : ""}${typeof t.bytes === "number" ? ` ${t.bytes}B` : ""}${typeof t.ms === "number" ? ` ${(t.ms / 1000).toFixed(1)}s` : ""}`;
+          return `[${time}] Tool: ${t.toolName}${t.file ? ` ${t.file}` : ""}${t.files && t.files.length > 0 ? ` ${t.files.join(", ")}` : ""}${t.query ? ` "${t.query}"` : ""}${typeof t.bytes === "number" ? ` ${t.bytes}B` : ""}${typeof t.ms === "number" ? ` ${(t.ms / 1000).toFixed(1)}s` : ""}`;
         case "model_diff":
           return `[${time}] Diff: ${t.file} (${t.hunks.length} hunks)`;
         case "model_done":
           return `[${time}] Done${typeof t.ms === "number" ? ` in ${(t.ms / 1000).toFixed(1)}s` : ""}`;
         case "model_error":
-          return `[${time}] Error${typeof t.httpCode === "number" ? ` (HTTP ${t.httpCode})` : ""}${typeof t.retryAttempts === "number" && t.retryAttempts > 0 ? ` [after ${t.retryAttempts} CLI attempts]` : ""}${t.resumable ? " [resumable]" : ""}: ${t.message}`;
+          return `[${time}] Error${typeof t.httpCode === "number" ? ` (HTTP ${t.httpCode})` : ""}${typeof t.retryAttempts === "number" && t.retryAttempts > 0 ? ` [after ${t.retryAttempts} CLI attempts]` : ""}${t.resumable ? " [resumable]" : ""}: ${t.message}${t.httpHeaders ? formatHeadersForTranscript(t.httpHeaders) : ""}`;
         case "model_restored":
           return `[${time}] Restored: ${t.files.join(", ")}`;
       }

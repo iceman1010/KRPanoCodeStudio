@@ -85,9 +85,9 @@ if [ "$SETUP" -eq 1 ]; then
     case "$API_KEY" in
         bad*|BAD*)
             emit '{"type":"setup","ok":false,"error":"API key rejected (401)"}'
-            exit 1
-            ;;
-    esac
+        exit 1
+        ;;
+esac
     emit "{\"type\":\"setup\",\"ok\":true,\"model\":\"$MODEL\",\"models\":[\"glm-5.2-coding\",\"glm-5.2-nvidia\",\"gpt-4o\"]}"
     exit 0
 fi
@@ -149,12 +149,128 @@ case "$PROMPT" in
     *524*|*gateway*|*timeout*)
         emit '{"type":"tool","name":"read_file","file":"tour.xml","ms":0}'
         sleep_ms 100
-        emit '{"type":"retry","attempt":1,"maxAttempts":2,"httpCode":524,"delayMs":300,"reason":"gateway_timeout","httpHeaders":{"server":"cloudflare","cf-ray":"8c1a2b3c4d5-LHR","cf-cache-status":"DYNAMIC","retry-after":"120"}}'
+        emit '{"type":"retry","attempt":1,"maxAttempts":2,"httpCode":524,"delayMs":300,"reason":"gateway_timeout","http_headers":{"server":"cloudflare","cf-ray":"8c1a2b3c4d5-LHR","cf-cache-status":"DYNAMIC","retry-after":"120"}}'
         sleep_ms 400
-        emit '{"type":"retry","attempt":2,"maxAttempts":2,"httpCode":524,"delayMs":600,"reason":"gateway_timeout","httpHeaders":{"server":"cloudflare","cf-ray":"8c1a2b3c4d6-LHR","cf-cache-status":"DYNAMIC","retry-after":"120"}}'
+        emit '{"type":"retry","attempt":2,"maxAttempts":2,"httpCode":524,"delayMs":600,"reason":"gateway_timeout","http_headers":{"server":"cloudflare","cf-ray":"8c1a2b3c4d6-LHR","cf-cache-status":"DYNAMIC","retry-after":"120"}}'
         sleep_ms 700
         emit '{"type":"error","message":"Edit failed: API error (HTTP 524): The API proxy timed out waiting for the upstream model (HTTP 524). This is a transient network issue, not an application error. Retrying typically resolves it.","http_code":524,"retry_attempts":2,"http_headers":{"server":"cloudflare","cf-ray":"8c1a2b3c4d7-LHR","cf-cache-status":"DYNAMIC","retry-after":"120"}}'
         exit 1
+        ;;
+esac
+
+# Plan-files scenario: prompt containing "planfiles" or "plan_files" triggers
+# a plan_files ask -> (user decision) -> yes/no flow that exercises the new
+# amber banner + stdin round-trip. Mirrors clarify/validation_retry stdin.
+case "$PROMPT" in
+    *planfiles*|*plan_files*)
+        emit '{"type":"reasoning","text":"I need to inspect the textnames style def plus a sample usage site before editing."}'
+        sleep_ms 400
+        emit '{"type":"plan_files","status":"ask","files":["panel.xml","panos/entrancehybride/entrancehybride.xml"],"reason":"Need textnames style definition plus a sample usage site to target the correct lower-left label."}'
+
+        # Block on stdin for the user's decision.
+        read -r ANSWER < /dev/stdin
+        case "$ANSWER" in
+            yes|y|YES|Y)
+                emit '{"type":"plan_files","status":"yes"}'
+                sleep_ms 200
+                # The follow-up tool event records the plan_files call itself.
+                emit '{"type":"tool","name":"plan_files","files":["panel.xml","panos/entrancehybride/entrancehybride.xml"],"reason":"Need textnames style definition plus a sample usage site to target the correct lower-left label.","ms":4}'
+                sleep_ms 400
+                emit '{"type":"reasoning","text":"Files inlined from plan_files — no separate read_file needed."}'
+                sleep_ms 400
+                emit '{"type":"tool","name":"write_file","file":"panel.xml","bytes":12306}'
+                sleep_ms 200
+
+                # Write the mock touch file so the watcher fires.
+                if [ -f "$TOUCH_FILE" ]; then
+                    cp "$TOUCH_FILE" "$BACKUP_DIR/.krpanocode-mock-touch"
+                fi
+                cat > "$TOUCH_FILE" <<'XMLEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- krpanocode mock write (plan_files approved path) -->
+<krpanocode_mock_marker/>
+XMLEOF
+
+                emit '{"type":"diff","file":"panel.xml","hunks":[{"line":351,"context":"css=\"p{color:#ffffff; ...}\"","old":"color:#ffffff","new":"color:#000000"}]}'
+                sleep_ms 200
+                emit '{"type":"done","ms":2400}'
+                exit 0
+                ;;
+            *)
+                # User declined — emit the no event, then fall back to read_file.
+                emit '{"type":"plan_files","status":"no","reason":"User declined at the banner"}'
+                sleep_ms 200
+                emit '{"type":"tool","name":"read_file","file":"panel.xml","ms":0}'
+                sleep_ms 400
+                emit '{"type":"tool","name":"write_file","file":"panel.xml","bytes":12306}'
+                sleep_ms 200
+
+                if [ -f "$TOUCH_FILE" ]; then
+                    cp "$TOUCH_FILE" "$BACKUP_DIR/.krpanocode-mock-touch"
+                fi
+                cat > "$TOUCH_FILE" <<'XMLEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- krpanocode mock write (plan_files declined, read_file fallback) -->
+<krpanocode_mock_marker/>
+XMLEOF
+
+                emit '{"type":"diff","file":"panel.xml","hunks":[{"line":351,"context":"css=\"p{color:#ffffff; ...}\"","old":"color:#ffffff","new":"color:#000000"}]}'
+                sleep_ms 200
+                emit '{"type":"done","ms":3200}'
+                exit 0
+                ;;
+        esac
+        ;;
+esac
+
+# XML validation retry scenario: prompt containing "invalidxml" or "badxml"
+# triggers a validation failure -> ask -> (user decision) -> retry/abort flow.
+case "$PROMPT" in
+    *invalidxml*|*badxml*)        emit '{"type":"reasoning","text":"Generating XML edit..."}'
+        sleep_ms 600
+        emit '{"type":"tool","name":"read_file","file":"skin/vtourskin.xml","ms":0}'
+        sleep_ms 300
+        emit '{"type":"tool","name":"write_file","file":"skin/vtourskin.xml","bytes":24326}'
+        sleep_ms 200
+
+        # Validation failure — emit the ask event.
+        emit '{"type":"validation_retry","status":"ask","attempt":1,"maxAttempts":3,"kind":"xml_validation","file":"skin/vtourskin.xml","line":109,"message":"Element \"<krpano>\" after root close on line 109","details":[{"line":109,"message":"Element \"<krpano>\" after root close on line 109"},{"line":110,"message":"Element \"<layer>\" after root close on line 110"},{"line":111,"message":"Element \"<layer>\" after root close on line 111"}]}'
+
+        # Block on stdin for the user's decision.
+        read -r ANSWER < /dev/stdin
+        case "$ANSWER" in
+            yes|y|YES|Y)
+                emit '{"type":"validation_retry","status":"retry","attempt":1,"maxAttempts":3}'
+                sleep_ms 500
+                emit '{"type":"reasoning","text":"Fixing the XML structure..."}'
+                sleep_ms 800
+                emit '{"type":"tool","name":"read_file","file":"skin/vtourskin.xml","ms":0}'
+                sleep_ms 300
+                emit '{"type":"tool","name":"write_file","file":"skin/vtourskin.xml","bytes":24120}'
+                sleep_ms 200
+
+                # Write the mock touch file so the watcher fires.
+                if [ -f "$TOUCH_FILE" ]; then
+                    cp "$TOUCH_FILE" "$BACKUP_DIR/.krpanocode-mock-touch"
+                fi
+                cat > "$TOUCH_FILE" <<'XMLEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- krpanocode mock write (validation retry fixed) -->
+<krpanocode_mock_marker/>
+XMLEOF
+
+                emit '{"type":"diff","file":"skin/vtourskin.xml","hunks":[{"line":42,"context":"<style name=\"textnames\"","old":"textcolor=\"0xffffff\"","new":"textcolor=\"0x000000\""}]}'
+                sleep_ms 200
+                emit '{"type":"done","ms":4200}'
+                exit 0
+                ;;
+            *)
+                # User declined — emit the abort event, then the final error.
+                emit '{"type":"validation_retry","status":"abort","attempt":1}'
+                emit '{"type":"error","message":"Element \"<krpano>\" after root close on line 109","kind":"xml_validation","file":"skin/vtourskin.xml","line":109,"details":[{"line":109,"message":"Element \"<krpano>\" after root close on line 109"}]}'
+                exit 1
+                ;;
+        esac
         ;;
 esac
 

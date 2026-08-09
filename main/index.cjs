@@ -680,6 +680,18 @@ function spawnPhar(args) {
             inClarify = true;
             disarmIdleTimer();
           }
+          if (evt.type === "validation_retry" && evt.status === "ask") {
+            // Same pattern: PHAR blocks on stdin waiting for the user's
+            // retry decision. Pause the idle timer so we don't kill it.
+            inClarify = true;
+            disarmIdleTimer();
+          }
+          if (evt.type === "plan_files" && evt.status === "ask") {
+            // Same pattern again: PHAR blocks on stdin waiting for the user's
+            // approve/decline decision on the proposed bulk pre-read.
+            inClarify = true;
+            disarmIdleTimer();
+          }
           emitPharEvent(evt);
         } catch {
           emitPharEvent({ type: "stderr", text: trimmed });
@@ -860,6 +872,7 @@ ipcMain.handle("list_models", async () => {
     let buffer = "";
     let settled = false;
     let stderrBuffer = "";
+    let stdoutError = "";
     const onIdleFire = () => {
       notifyIdleTimeout(
         "models",
@@ -888,6 +901,11 @@ ipcMain.handle("list_models", async () => {
             child.kill();
             return;
           }
+          // PHAR emits errors as NDJSON on stdout in --json mode (not stderr).
+          // Capture them so the exit handler can surface a real message.
+          if (v.type === "error" && typeof v.message === "string") {
+            stdoutError = v.message;
+          }
         } catch {}
       }
     });
@@ -909,12 +927,16 @@ ipcMain.handle("list_models", async () => {
       if (settled) return;
       settled = true;
       disarmIdleTimer();
-      // Surface the stderr tail so the user can see WHY it failed (e.g.
-      // "API key not found" vs a cryptic exit code).
+      // Surface a real error message. The PHAR emits errors as NDJSON on
+      // stdout (not stderr) in --json mode, so prefer the captured error
+      // event. Fall back to stderr (e.g. PHP startup warnings) or a bare
+      // exit code as a last resort.
       const stderrTail = stderrBuffer.trim().slice(-500);
-      const msg = stderrTail
-        ? `Model list failed (exit code ${code}): ${stderrTail}`
-        : `Model list failed (exit code ${code})`;
+      const msg = stdoutError
+        ? `Model list failed: ${stdoutError}`
+        : stderrTail
+          ? `Model list failed (exit code ${code}): ${stderrTail}`
+          : `Model list failed (exit code ${code})`;
       reject(msg);
     });
     armIdleTimer(onIdleFire);

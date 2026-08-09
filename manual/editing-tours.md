@@ -51,7 +51,10 @@ question before editing — see [Clarify](clarify.md).
 
 - **Name files when you can** — `tour.xml`, `skin/skin.xml`, `panel.xml`. The
   AI will look at every editable file by default; pointing it at the right
-  one is faster and more accurate.
+  one is faster and more accurate. The AI now also sees structural hints per
+  file (which styles it defines/uses, positional `align` values), so even
+  vague prompts land closer to the right target — but explicit still beats
+  vague.
 - **Use scene names verbatim** — `"scene_poolsideday"`, not "the pool scene".
   Copy the scene name from the `<scene name="...">` attribute in your XML.
 - **Quote attribute values** you want to set — `title="Swimming Pool"`, not
@@ -59,6 +62,11 @@ question before editing — see [Clarify](clarify.md).
 - **One concern per prompt** — if you want to change autorotation *and* add a
   hotspot, send two prompts. The diff review is clearer and the Undo is
   per-concern.
+- **Use Clarify for vague prompts** — when you can't name the exact file or
+  element, send with **Clarify**. The AI's clarify verdict (the *"I will
+  change X in Y"* line) is carried forward as an explicit anchor for the
+  edit phase, so the target it nailed down at clarify time is the target
+  that gets edited. See [Clarify](clarify.md).
 
 ---
 
@@ -67,11 +75,16 @@ question before editing — see [Clarify](clarify.md).
 While the AI works, the **Activity** panel beneath your prompt fills up:
 
 ```
-read_file   tour.xml                         0.4s
-docsearch   "scene title attribute"          2.1s
-write_file  tour.xml         8,494 B          0.0s
+plan_files  tour.xml, panel.xml            0.4s
+read_file   tour.xml                        0.4s
+docsearch   "scene title attribute"         2.1s
+write_file  tour.xml         8,494 B         0.0s
 ```
 
+- **`plan_files`** — the AI declared which files it intends to read and the
+  app asked you to confirm. Only appears on multi-file edits where the AI
+  thinks confirmation adds value; you won't see it on trivial single-file
+  edits. See [What happens inside → Plan-files round-trip](what-happens-inside.md#the-plan-files-round-trip-a-bit-more-detail).
 - **`read_file`** — the AI opened a file from your tour. Usually all the
   editable files before it decides what to change.
 - **`docsearch`** — the AI searched the bundled KRPano 1.23.3 documentation

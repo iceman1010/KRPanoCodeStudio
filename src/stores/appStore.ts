@@ -72,6 +72,25 @@ interface AppState {
   // loop is multi-round; we want the LAST user_answer merged into the resume
   // instruction. Reset to null at the start of each run (`beginRun`).
   pendingClarifyAnswer: string | null;
+  // Validation retry state: set when the CLI emits validation_retry status:"ask"
+  // (LLM produced invalid XML). The UI shows a banner with Retry/Abort buttons.
+  // Cleared on "retry"/"abort"/done/error/new-run.
+  validationRetry: {
+    message: string;
+    file?: string;
+    line?: number | null;
+    details?: { line: number; message: string }[];
+    attempt: number;
+    maxAttempts: number;
+  } | null;
+  // Plan-files state: set when the CLI emits plan_files status:"ask" (the LLM
+  // called the plan_files tool and is waiting for the user to approve the
+  // bulk pre-read). The UI shows an amber banner with Approve/Decline buttons.
+  // Cleared on "yes"/"no"/done/error/new-run/stream-end.
+  planFiles: {
+    files: string[];
+    reason: string;
+  } | null;
   // --- conversation log ---
   conversation: ConversationTurn[];
   addConversationTurn: (turn: ConversationTurn) => void;
@@ -152,6 +171,8 @@ modelsLoading: true,
   lastEdit: null,
   failedEdit: null,
   pendingClarifyAnswer: null,
+  validationRetry: null,
+  planFiles: null,
   recentTours: [],
 
   setPhase: (p) => set({ phase: p }),
@@ -167,6 +188,8 @@ modelsLoading: true,
       lastEdit: { ...edit, startedAt: Date.now(), clarifyAnswer: null },
       failedEdit: null,
       pendingClarifyAnswer: null,
+      validationRetry: null,
+      planFiles: null,
     }),
   // Build the merged instruction for a resumed edit. Returns null when there
   // is nothing to resume, or when the currently-open tour doesn't match the
@@ -198,6 +221,8 @@ modelsLoading: true,
       lastEdit: null,
       failedEdit: null,
       pendingClarifyAnswer: null,
+      validationRetry: null,
+      planFiles: null,
     }),
   closeTour: () =>
     set({
@@ -215,6 +240,8 @@ modelsLoading: true,
       lastEdit: null,
       failedEdit: null,
       pendingClarifyAnswer: null,
+      validationRetry: null,
+      planFiles: null,
     }),
   clearActivity: () => set({ activity: [] }),
   clearDiffs: () => set({ diffs: [] }),
@@ -281,6 +308,8 @@ modelsLoading: true,
               query: ev.query,
               bytes: ev.bytes,
               ms: ev.ms,
+              files: ev.files,
+              reason: ev.reason,
               timestamp: now,
             },
           ],
@@ -292,6 +321,8 @@ modelsLoading: true,
           query: ev.query,
           bytes: ev.bytes,
           ms: ev.ms,
+          files: ev.files,
+          reason: ev.reason,
           timestamp: now,
         });
         return;
@@ -317,7 +348,7 @@ modelsLoading: true,
         // touch phase: we're still "working".
         const r = ev as unknown as {
           attempt: number; maxAttempts: number; httpCode: number;
-          delayMs: number; reason: string;
+          delayMs: number; reason: string; http_headers?: Record<string, string>;
         };
         get().addConversationTurn({
           kind: "model_retry",
@@ -326,8 +357,82 @@ modelsLoading: true,
           httpCode: r.httpCode,
           delayMs: r.delayMs,
           reason: r.reason,
+          httpHeaders: r.http_headers,
           timestamp: now,
         });
+        return;
+      }
+      case "validation_retry": {
+        const vr = ev as unknown as {
+          status: "ask" | "retry" | "abort";
+          attempt: number;
+          maxAttempts: number;
+          message?: string;
+          file?: string;
+          line?: number | null;
+          details?: { line: number; message: string }[];
+        };
+        if (vr.status === "ask") {
+          set({
+            validationRetry: {
+              message: vr.message ?? "XML validation failed",
+              file: vr.file,
+              line: vr.line,
+              details: vr.details,
+              attempt: vr.attempt,
+              maxAttempts: vr.maxAttempts,
+            },
+          });
+          get().addConversationTurn({
+            kind: "model_validation_error",
+            message: vr.message ?? "XML validation failed",
+            file: vr.file,
+            line: vr.line,
+            details: vr.details,
+            attempt: vr.attempt,
+            maxAttempts: vr.maxAttempts,
+            timestamp: now,
+          });
+        } else if (vr.status === "retry") {
+          set({ validationRetry: null });
+          get().addConversationTurn({
+            kind: "model_validation_retry",
+            attempt: vr.attempt,
+            maxAttempts: vr.maxAttempts,
+            timestamp: now,
+          });
+        } else {
+          // abort — clear the banner. The final error event will follow.
+          set({ validationRetry: null });
+        }
+        return;
+      }
+      case "plan_files": {
+        const pf = ev as unknown as {
+          status: "ask" | "yes" | "no";
+          files?: string[];
+          reason?: string;
+        };
+        if (pf.status === "ask") {
+          const files = pf.files ?? [];
+          const reason = pf.reason ?? "";
+          set({ planFiles: { files, reason } });
+          get().addConversationTurn({
+            kind: "model_plan_files_ask",
+            files,
+            reason,
+            timestamp: now,
+          });
+        } else {
+          // yes or no — clear the banner either way. The follow-up tool event
+          // (name: plan_files) records the call itself in the activity log.
+          set({ planFiles: null });
+          get().addConversationTurn({
+            kind: "model_plan_files_result",
+            approved: pf.status === "yes",
+            timestamp: now,
+          });
+        }
         return;
       }
       case "diff": {
@@ -356,6 +461,8 @@ modelsLoading: true,
           // can't appear after a successful edit.
           lastEdit: null,
           failedEdit: null,
+          validationRetry: null,
+          planFiles: null,
         });
         get().addConversationTurn({ kind: "model_done", ms: ev.ms, timestamp: now });
         return;
@@ -396,7 +503,7 @@ modelsLoading: true,
         // user dismissing the error text below. Skipped when the error isn't
         // resumable (then failedEdit stays null and no banner appears).
         const failedEdit = canResume ? state.lastEdit : state.failedEdit;
-        set({ error: evTyped.message, rateLimit: rl, failedEdit });
+        set({ error: evTyped.message, rateLimit: rl, failedEdit, validationRetry: null, planFiles: null });
         // If we were mid-edit or mid-clarify, fall back to review (so user can
         // undo) when diffs exist, otherwise idle. Without the clarify branch
         // here, a stream that dies while the user is typing an answer would
@@ -414,6 +521,7 @@ modelsLoading: true,
           resumable: canResume,
           httpCode: httpCode ?? undefined,
           retryAttempts: evTyped.retry_attempts,
+          httpHeaders: evTyped.http_headers,
           timestamp: now,
         });
         return;
@@ -427,6 +535,8 @@ modelsLoading: true,
             phase: state.diffs.length > 0 ? "review" : "idle",
             runStartedAt: null,
             clarifyQuestion: null,
+            validationRetry: null,
+            planFiles: null,
           });
         }
         return;
