@@ -1,9 +1,25 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil } from "lucide-react";
 import { useAppStore } from "@/stores/appStore";
 import type { DiffEntry, DiffHunk } from "@/lib/types";
 
-function HunkRow({ hunk }: { hunk: DiffHunk }) {
+function HunkRow({
+  hunk,
+  file,
+  hunkIndex,
+}: {
+  hunk: DiffHunk;
+  file: string;
+  hunkIndex: number;
+}) {
+  const setEditingHunk = useAppStore((s) => s.setEditingHunk);
+  // Green rows are clickable to open the manual-edit modal. The number of
+  // lines the hunk occupies in the new file = number of "\n"-separated
+  // segments in `new`. Pure deletions (new === undefined|"") never render a
+  // green row so the handler is never attached for them.
+  const newCount = hunk.new ? hunk.new.split("\n").length : 0;
+  const canEdit = !!hunk.new && hunk.line > 0;
+
   return (
     <div className="space-y-0.5 font-mono text-xs">
       {hunk.context && (
@@ -19,10 +35,29 @@ function HunkRow({ hunk }: { hunk: DiffHunk }) {
         </div>
       )}
       {hunk.new && (
-        <div className="bg-emerald-500/10 px-2 py-0.5 text-emerald-600 dark:text-emerald-400">
-          <span className="mr-2 select-none">+</span>
-          {hunk.new}
-        </div>
+        <button
+          type="button"
+          disabled={!canEdit}
+          onClick={
+            canEdit
+              ? () =>
+                  setEditingHunk({
+                    file,
+                    line: hunk.line,
+                    count: newCount,
+                    hunkIndex,
+                  })
+              : undefined
+          }
+          className="group flex w-full bg-emerald-500/10 px-2 py-0.5 text-left text-emerald-600 transition-colors enabled:hover:bg-emerald-500/20 disabled:cursor-default dark:text-emerald-400"
+          title={canEdit ? "Click to edit this line" : undefined}
+        >
+          <span className="mr-2 select-none text-emerald-600/70 dark:text-emerald-400/70">+</span>
+          <span className="flex-1 whitespace-pre-wrap break-all">{hunk.new}</span>
+          {canEdit && (
+            <Pencil className="ml-1.5 mt-0.5 h-3 w-3 shrink-0 text-emerald-600/50 opacity-0 group-hover:opacity-100 dark:text-emerald-400/50" />
+          )}
+        </button>
       )}
     </div>
   );
@@ -46,7 +81,7 @@ function FileSection({ entry }: { entry: DiffEntry }) {
       {open && (
         <div className="space-y-1 border-t px-1 py-1">
           {entry.hunks.map((h, i) => (
-            <HunkRow key={i} hunk={h} />
+            <HunkRow key={i} hunk={h} file={entry.file} hunkIndex={i} />
           ))}
         </div>
       )}

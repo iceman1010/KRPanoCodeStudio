@@ -9,6 +9,7 @@ import { IdleTimeoutModal } from "@/components/IdleTimeoutModal";
 import { RightPanel } from "@/components/right-panel/RightPanel";
 import { EmptyState } from "@/states/EmptyState";
 import { SettingsModal } from "@/modals/SettingsModal";
+import { EditDiffLineModal } from "@/modals/EditDiffLineModal";
 import { HelpModal } from "@/components/HelpModal";
 import { useAppStore } from "@/stores/appStore";
 import { usePharStream } from "@/hooks/usePharStream";
@@ -91,6 +92,7 @@ export default function App() {
           <TopBar onOpenSettings={() => setSettingsOpen(true)} onOpenHelp={() => setHelpOpen(true)} />
           <EmptyState />
           <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
+          <EditDiffLineModal />
           <HelpModal open={helpOpen} onOpenChange={setHelpOpen} />
           <UpdateNotificationModal />
           <IdleTimeoutModal />
@@ -123,7 +125,8 @@ export default function App() {
           </Group>
         </div>
         <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
-          <HelpModal open={helpOpen} onOpenChange={setHelpOpen} />
+          <EditDiffLineModal />
+        <HelpModal open={helpOpen} onOpenChange={setHelpOpen} />
         <UpdateNotificationModal />
           <IdleTimeoutModal />
         <Toaster richColors position="bottom-right" />

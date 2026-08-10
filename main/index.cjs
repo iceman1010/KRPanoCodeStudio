@@ -1097,6 +1097,39 @@ ipcMain.handle("diag_log", async (event, data) => {
   console.log("[diag]", JSON.stringify(data));
 });
 
+// ---- Direct file read/write (for manual diff-hunk editing) ----
+// Scoped to the currently-open tour folder. Rejects path traversal.
+// The CLI is NOT involved — these are pure filesystem ops used by the
+// EditDiffLineModal to let the user tweak the LLM's output before Keep/Undo.
+
+function resolveTourPath(relPath) {
+  if (!tourFolder) throw new Error("no tour open");
+  const root = path.resolve(tourFolder);
+  const abs = path.resolve(root, relPath);
+  // Guard against ../ and absolute paths: the resolved path must live
+  // under the tour root. path.relative() normalizes and lets us detect
+  // escapes cleanly.
+  const rel = path.relative(root, abs);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error("path escapes tour folder");
+  }
+  return abs;
+}
+
+ipcMain.handle("read_file", async (_evt, relPath) => {
+  const abs = resolveTourPath(relPath);
+  return await fsp.readFile(abs, "utf8");
+});
+
+ipcMain.handle("write_file", async (_evt, relPath, content) => {
+  const abs = resolveTourPath(relPath);
+  // Atomic write: tmp file + rename, same directory.
+  const tmp = abs + ".studio-edit-" + Date.now();
+  await fsp.writeFile(tmp, content, "utf8");
+  await fsp.rename(tmp, abs);
+  return { ok: true };
+});
+
 // ---- User preferences storage ----
 const preferencesPath = path.join(app.getPath("userData"), "preferences.json");
 

@@ -92,6 +92,17 @@ interface AppState {
     files: string[];
     reason: string;
   } | null;
+  // Manual diff-hunk edit: set when the user clicks a green (added) line in
+  // the DiffViewer to open the EditDiffLineModal. Holds enough context to
+  // load the affected line range from disk and, after save, mutate the
+  // matching hunk's `new` field in `diffs` so the viewer reflects the edit.
+  // Cleared on modal close / save / Keep / Undo / new-run.
+  editingHunk: {
+    file: string;
+    line: number;     // 1-based, first line of the hunk in the NEW file
+    count: number;    // how many lines the hunk spans in the NEW file
+    hunkIndex: number;  // index into diffs[file].hunks
+  } | null;
   // --- conversation log ---
   conversation: ConversationTurn[];
   addConversationTurn: (turn: ConversationTurn) => void;
@@ -132,6 +143,18 @@ interface AppState {
   // merged intent. No-op when there is no in-flight lastEdit (e.g. user typed
   // an answer to a previous run's stale event).
   setLastClarifyAnswer: (answer: string) => void;
+  // Open the EditDiffLineModal for a specific hunk. After the modal saves,
+  // the caller uses `applyHunkEdit` to splice the edited text into both the
+  // on-disk file (via write_file IPC) and the store's `diffs` array.
+  setEditingHunk: (target: {
+    file: string;
+    line: number;
+    count: number;
+    hunkIndex: number;
+  } | null) => void;
+  // After the EditDiffLineModal saves the file on disk, update the matching
+  // hunk's `new` field in `diffs` so the DiffViewer reflects the manual edit.
+  applyHunkEdit: (file: string, hunkIndex: number, newNew: string) => void;
 
   // The central event handler — dispatches any PHAR event into state changes.
   applyPharEvent: (ev: PharEvent) => void;
@@ -176,10 +199,11 @@ modelsLoading: true,
   pendingClarifyAnswer: null,
   validationRetry: null,
   planFiles: null,
+  editingHunk: null,
   recentTours: [],
 
   setPhase: (p) => set({ phase: p }),
-  beginRun: () => set({ phase: "working", runStartedAt: Date.now() }),
+  beginRun: () => set({ phase: "working", runStartedAt: Date.now(), editingHunk: null }),
   endRun: (p) => set({ phase: p, runStartedAt: null }),
   // Seed lastEdit at the start of a run. pendingClarifyAnswer is reset so a
   // leftover answer from a previous run can't bleed into this one. The
@@ -193,6 +217,7 @@ modelsLoading: true,
       pendingClarifyAnswer: null,
       validationRetry: null,
       planFiles: null,
+      editingHunk: null,
     }),
   // Build the merged instruction for a resumed edit. Returns null when there
   // is nothing to resume, or when the currently-open tour doesn't match the
@@ -226,6 +251,7 @@ modelsLoading: true,
       pendingClarifyAnswer: null,
       validationRetry: null,
       planFiles: null,
+      editingHunk: null,
     }),
   closeTour: () =>
     set({
@@ -245,9 +271,10 @@ modelsLoading: true,
       pendingClarifyAnswer: null,
       validationRetry: null,
       planFiles: null,
+      editingHunk: null,
     }),
   clearActivity: () => set({ activity: [] }),
-  clearDiffs: () => set({ diffs: [] }),
+  clearDiffs: () => set({ diffs: [], editingHunk: null }),
   setError: (msg) => set({ error: msg }),
   clearRateLimit: () => set({ rateLimit: null }),
   setModels: (models) => set({ models }),
@@ -265,6 +292,19 @@ modelsLoading: true,
     if (!s.lastEdit || !s.tour || s.tour.folder !== s.lastEdit.tourFolder) return;
     set({ lastEdit: { ...s.lastEdit, clarifyAnswer: answer } });
   },
+  setEditingHunk: (target) => set({ editingHunk: target }),
+  applyHunkEdit: (file, hunkIndex, newNew) =>
+    set((s) => ({
+      diffs: s.diffs.map((d) => {
+        if (d.file !== file) return d;
+        return {
+          ...d,
+          hunks: d.hunks.map((h, i) =>
+            i === hunkIndex ? { ...h, new: newNew } : h,
+          ),
+        };
+      }),
+    })),
   // conversation log
   addConversationTurn: (turn) => set((s) => ({ conversation: [...s.conversation, turn] })),
   clearConversation: () => set({ conversation: [] }),
@@ -453,6 +493,7 @@ modelsLoading: true,
           diffs: [],
           clarifyQuestion: null,
           runStartedAt: null,
+          editingHunk: null,
         });
         get().addConversationTurn({ kind: "model_restored", files: ev.files, timestamp: now });
         return;
