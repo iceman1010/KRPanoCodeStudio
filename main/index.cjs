@@ -796,7 +796,7 @@ ipcMain.handle("open_tour", async (event, folder) => {
 });
 
 ipcMain.handle("send_prompt", async (event, options) => {
-  const { prompt, clarify, model } = options;
+  const { prompt, clarify, model, autoApproveFileScope } = options;
   try {
     if (!tourFolder) return Promise.reject("no tour open");
     killCurrentChild();
@@ -806,6 +806,7 @@ ipcMain.handle("send_prompt", async (event, options) => {
     // the confirmation prompt.
     const args = ["--json", "--yes"];
     if (clarify) args.push("--clarify");
+    if (autoApproveFileScope) args.push("--auto-approve-file-scope");
     if (model) args.push("-m", model);
     args.push("-p", prompt, "-f", tourStr);
     await spawnPhar(args);

@@ -41,6 +41,8 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const setTheme = useAppStore((s) => s.setTheme);
   const showReasoning = useAppStore((s) => s.showReasoning);
   const setShowReasoning = useAppStore((s) => s.setShowReasoning);
+  const autoApproveFileScope = useAppStore((s) => s.autoApproveFileScope);
+  const setAutoApproveFileScope = useAppStore((s) => s.setAutoApproveFileScope);
   const models = useAppStore((s) => s.models);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
@@ -382,6 +384,31 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               Show AI reasoning in activity log
             </Label>
           </div>
+
+          {/* Auto-approve file scope */}
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="autoApproveFileScope"
+              checked={autoApproveFileScope}
+              onCheckedChange={async (v) => {
+                const next = v === true;
+                setAutoApproveFileScope(next);
+                try {
+                  await invoke("set_preference", "autoApproveFileScope", next);
+                } catch (err) {
+                  console.error("Failed to save autoApproveFileScope:", err);
+                }
+              }}
+            />
+            <Label htmlFor="autoApproveFileScope" className="cursor-pointer text-sm font-normal">
+              Auto-approve file scope plan (skip plan_files confirmation banner)
+            </Label>
+          </div>
+          <p className="text-[10px] text-muted-foreground ml-6">
+            When enabled, the AI's proposed file list is auto-approved without
+            asking. Use with caution — you won't see which files the model plans
+            to read before it reads them.
+          </p>
 
           {/* ---- App (UI) version + update ---- */}
           <div className="space-y-1.5 border-t pt-3">

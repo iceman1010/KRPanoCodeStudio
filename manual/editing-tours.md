@@ -179,6 +179,9 @@ your-tour/
 - The CLI keeps the **N most recent** backups per tour (default 10). Older
   ones are pruned automatically. You can change `N` in
   **Settings → Backup retention**.
+- **Settings → Auto-approve file scope plan** (off by default): when enabled,
+  the AI's proposed file list is auto-approved without showing the Plan files
+  banner. The conversation log still records the auto-approved plan.
 - **Undo** always restores from the most recent backup.
 
 !!! warning "Don't delete `.krpanocode-backup/`"

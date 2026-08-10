@@ -19,6 +19,7 @@ export function PromptBox() {
   const beginEdit = useAppStore((s) => s.beginEdit);
   const endRun = useAppStore((s) => s.endRun);
   const selectedModel = useAppStore((s) => s.selectedModel);
+  const autoApproveFileScope = useAppStore((s) => s.autoApproveFileScope);
   const elapsed = useRunElapsed();
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -52,7 +53,7 @@ export function PromptBox() {
     const now = Date.now();
     useAppStore.getState().addConversationTurn({ kind: "user_prompt", text: prompt, clarify, timestamp: now });
     try {
-      await invoke("send_prompt", { prompt, clarify, model: selectedModel });
+      await invoke("send_prompt", { prompt, clarify, model: selectedModel, autoApproveFileScope });
     } catch (err) {
       setBusy(false);
       endRun("idle");

@@ -37,6 +37,7 @@ export default function App() {
   const tour = useAppStore((s) => s.tour);
   const setModels = useAppStore((s) => s.setModels);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
+  const setAutoApproveFileScope = useAppStore((s) => s.setAutoApproveFileScope);
   const setModelsLoading = useAppStore((s) => s.setModelsLoading);
   const setModelsLoadFailed = useAppStore((s) => s.setModelsLoadFailed);
   const setRecentTours = useAppStore((s) => s.setRecentTours);
@@ -49,6 +50,8 @@ export default function App() {
       try {
         const selectedModel = await invoke<string | null>("get_preference", "selectedModel");
         if (selectedModel) setSelectedModel(selectedModel);
+        const autoApprove = await invoke<boolean | null>("get_preference", "autoApproveFileScope");
+        if (autoApprove !== null) setAutoApproveFileScope(autoApprove);
         const recent = await invoke<{ folder: string; openedAt: number }[] | null>(
           "get_preference",
           "recentTours",
@@ -79,7 +82,7 @@ export default function App() {
     };
 
     Promise.all([loadPreferences(), loadModels()]);
-  }, [setSelectedModel, setModels, setModelsLoading, setModelsLoadFailed, setRecentTours]);
+  }, [setSelectedModel, setAutoApproveFileScope, setModels, setModelsLoading, setModelsLoadFailed, setRecentTours]);
 
   if (!tour) {
     return (

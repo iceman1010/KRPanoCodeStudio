@@ -41,6 +41,7 @@ while [ $# -gt 0 ]; do
         --setup)        SETUP=1; shift ;;
         --restore)      RESTORE=1; shift ;;
         --clarify)      CLARIFY=1; shift ;;
+        --auto-approve-file-scope) AUTO_APPROVE_FILE_SCOPE=1; shift ;;
         -u|--update)    UPDATE=1; shift ;;
         -p)             PROMPT="${2:-}"; shift 2 ;;
         -f)             FOLDER="${2:-}"; shift 2 ;;
@@ -166,6 +167,32 @@ case "$PROMPT" in
         emit '{"type":"reasoning","text":"I need to inspect the textnames style def plus a sample usage site before editing."}'
         sleep_ms 400
         emit '{"type":"plan_files","status":"ask","files":["panel.xml","panos/entrancehybride/entrancehybride.xml"],"reason":"Need textnames style definition plus a sample usage site to target the correct lower-left label."}'
+
+        # --auto-approve-file-scope: skip stdin block, emit auto-approved.
+        if [ "$AUTO_APPROVE_FILE_SCOPE" -eq 1 ]; then
+            emit '{"type":"plan_files","status":"auto-approved","files":["panel.xml","panos/entrancehybride/entrancehybride.xml"],"reason":"Auto-approved via --auto-approve-file-scope"}'
+            sleep_ms 200
+            emit '{"type":"tool","name":"plan_files","files":["panel.xml","panos/entrancehybride/entrancehybride.xml"],"reason":"Need textnames style definition plus a sample usage site to target the correct lower-left label.","ms":4}'
+            sleep_ms 400
+            emit '{"type":"reasoning","text":"Files inlined from plan_files — no separate read_file needed."}'
+            sleep_ms 400
+            emit '{"type":"tool","name":"write_file","file":"panel.xml","bytes":12306}'
+            sleep_ms 200
+
+            if [ -f "$TOUCH_FILE" ]; then
+                cp "$TOUCH_FILE" "$BACKUP_DIR/.krpanocode-mock-touch"
+            fi
+            cat > "$TOUCH_FILE" <<'XMLEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- krpanocode mock write (plan_files auto-approved path) -->
+<krpanocode_mock_marker/>
+XMLEOF
+
+            emit '{"type":"diff","file":"panel.xml","hunks":[{"line":351,"context":"css=\"p{color:#ffffff; ...}\"","old":"color:#ffffff","new":"color:#000000"}]}'
+            sleep_ms 200
+            emit '{"type":"done","ms":2400}'
+            exit 0
+        fi
 
         # Block on stdin for the user's decision.
         read -r ANSWER < /dev/stdin

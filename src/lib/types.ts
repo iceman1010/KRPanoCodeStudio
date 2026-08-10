@@ -142,9 +142,9 @@ export interface ValidationRetryEvent {
  */
 export interface PlanFilesEvent {
   type: "plan_files";
-  status: "ask" | "yes" | "no";
-  files?: string[];      // present on ask
-  reason?: string;       // present on ask; also present on no (decline reason)
+  status: "ask" | "yes" | "no" | "auto-approved";
+  files?: string[];      // present on ask and auto-approved
+  reason?: string;       // present on ask; also present on no (decline reason); present on auto-approved
 }
 
 // Synthetic event emitted by the Rust streamer when stdout closes (process exited).
@@ -215,6 +215,7 @@ export type ConversationTurn =
   | { kind: "user_validation_retry_yes"; attempt: number; timestamp: number }
   | { kind: "user_validation_retry_no"; attempt: number; timestamp: number }
   | { kind: "model_plan_files_ask"; files: string[]; reason: string; timestamp: number }
+  | { kind: "model_plan_files_auto_approved"; files: string[]; reason: string; timestamp: number }
   | { kind: "user_plan_files_yes"; files: string[]; timestamp: number }
   | { kind: "user_plan_files_no"; files: string[]; reason: string; timestamp: number }
   | { kind: "model_plan_files_result"; approved: boolean; timestamp: number }

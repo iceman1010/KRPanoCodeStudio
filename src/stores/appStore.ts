@@ -51,6 +51,7 @@ interface AppState {
   // --- models ---
   models: string[];
   selectedModel: string | null;
+  autoApproveFileScope: boolean;
   modelsLoading: boolean;
   modelsLoadFailed: boolean;
   // --- UI prefs ---
@@ -119,6 +120,7 @@ interface AppState {
   clearRateLimit: () => void;
   setModels: (models: string[]) => void;
   setSelectedModel: (m: string | null) => void;
+  setAutoApproveFileScope: (b: boolean) => void;
   setModelsLoading: (b: boolean) => void;
   setModelsLoadFailed: (b: boolean) => void;
   setTheme: (t: "light" | "dark" | "system") => void;
@@ -158,6 +160,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   rateLimit: null,
   models: [],
   selectedModel: null,
+  autoApproveFileScope: false,
 modelsLoading: true,
   modelsLoadFailed: false,
   // --- conversation log ---
@@ -249,6 +252,7 @@ modelsLoading: true,
   clearRateLimit: () => set({ rateLimit: null }),
   setModels: (models) => set({ models }),
   setSelectedModel: (m) => set({ selectedModel: m }),
+  setAutoApproveFileScope: (b) => set({ autoApproveFileScope: b }),
   setModelsLoading: (b) => set({ modelsLoading: b }),
   setModelsLoadFailed: (b) => set({ modelsLoadFailed: b }),
   setTheme: (t) => set({ theme: t }),

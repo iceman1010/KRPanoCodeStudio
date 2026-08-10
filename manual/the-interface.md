@@ -103,6 +103,13 @@ box and the Files summary) listing the proposed files and the AI's reason.
 back to individual `read_file` calls for just what it needs. The edit
 continues either way. See [What happens inside](what-happens-inside.md).
 
+You can disable this banner entirely in **Settings → Auto-approve file scope
+plan**. When enabled, the AI's proposed file list is auto-approved without
+showing the banner, and the edit proceeds immediately. The conversation
+log still records which files the model planned to read (shown as an
+`auto-approved` entry). Use with caution — you won't see the proposal
+before the AI reads the files.
+
 ### Validation retry banner (amber, only when the AI produced invalid XML)
 If the AI's edit fails XML validation, an amber **Validation retry** banner
 appears with the error details (file, line, message — collapsible). **Retry
