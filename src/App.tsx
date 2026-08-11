@@ -11,9 +11,12 @@ import { EmptyState } from "@/states/EmptyState";
 import { SettingsModal } from "@/modals/SettingsModal";
 import { EditDiffLineModal } from "@/modals/EditDiffLineModal";
 import { HelpModal } from "@/components/HelpModal";
+import { SplashScreen } from "@/components/SplashScreen";
 import { useAppStore } from "@/stores/appStore";
 import { usePharStream } from "@/hooks/usePharStream";
 import { invoke, on } from "@/lib/electron";
+
+const APP_VERSION = __APP_VERSION__;
 
 function useApplyTheme() {
   const theme = useAppStore((s) => s.theme);
@@ -128,6 +131,7 @@ export default function App() {
     return (
       <TooltipProvider>
         <div className="flex h-screen flex-col bg-background text-foreground">
+          <SplashScreen version={APP_VERSION} />
           <TopBar onOpenSettings={() => setSettingsOpen(true)} onOpenHelp={() => setHelpOpen(true)} />
           <EmptyState />
           <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
@@ -144,6 +148,7 @@ export default function App() {
   return (
       <TooltipProvider>
         <div className="flex h-screen flex-col bg-background text-foreground">
+          <SplashScreen version={APP_VERSION} />
           <TopBar onOpenSettings={() => setSettingsOpen(true)} onOpenHelp={() => setHelpOpen(true)} />
           <div className="flex-1 overflow-hidden">
           <Group orientation="horizontal" style={{ height: "100%" }}>
