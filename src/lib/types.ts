@@ -13,6 +13,8 @@ export type PharEvent =
   | RetryEvent
   | ValidationRetryEvent
   | PlanFilesEvent
+  | UsageEvent
+  | UsageSummaryEvent
   | StreamEndEvent
   | VersionEvent
   | ModelsEvent
@@ -147,6 +149,35 @@ export interface PlanFilesEvent {
   reason?: string;       // present on ask; also present on no (decline reason); present on auto-approved
 }
 
+/**
+ * Emitted once per API response with token counts for that request.
+ * `phase` indicates which stage of the edit pipeline this usage belongs to.
+ * See PLAN-JSON-MODE.md "usage" event.
+ */
+export interface UsageEvent {
+  type: "usage";
+  phase: "clarify" | "edit" | "retry";
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  model: string;
+}
+
+/**
+ * Emitted near the end of a run (before `done`) with the aggregated token
+ * breakdown across all phases. `clarify` is null when no clarify round ran.
+ * `retries` is empty when no retry attempts occurred.
+ * See PLAN-JSON-MODE.md "usage_summary" event.
+ */
+export interface UsageSummaryEvent {
+  type: "usage_summary";
+  clarify: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
+  edit: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
+  retries: Array<{ prompt_tokens: number; completion_tokens: number; total_tokens: number }>;
+  grand_total: number;
+  model: string;
+}
+
 // Synthetic event emitted by the Rust streamer when stdout closes (process exited).
 export interface StreamEndEvent {
   type: "__stream_end__";
@@ -220,6 +251,8 @@ export type ConversationTurn =
   | { kind: "user_plan_files_no"; files: string[]; reason: string; timestamp: number }
   | { kind: "model_plan_files_result"; approved: boolean; timestamp: number }
   | { kind: "model_diff"; file: string; hunks: DiffHunk[]; timestamp: number }
+  | { kind: "model_usage"; phase: "clarify" | "edit" | "retry"; prompt_tokens: number; completion_tokens: number; total_tokens: number; model: string; timestamp: number }
+  | { kind: "model_usage_summary"; clarify: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null; edit: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null; retries: Array<{ prompt_tokens: number; completion_tokens: number; total_tokens: number }>; grand_total: number; model: string; timestamp: number }
   | { kind: "model_done"; ms?: number; timestamp: number }
   | { kind: "model_error"; message: string; resumable?: boolean; httpCode?: number; retryAttempts?: number; httpHeaders?: Record<string, string>; timestamp: number }
   | { kind: "model_restored"; files: string[]; timestamp: number };

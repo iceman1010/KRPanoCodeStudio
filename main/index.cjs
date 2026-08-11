@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, powerMonitor } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const log = require("electron-log");
 const path = require("node:path");
@@ -7,6 +7,29 @@ const https = require("node:https");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const { spawn } = require("node:child_process");
+const dns = require("node:dns").promises;
+
+// Hostname the LiteLLM proxy lives on. Used by waitForNetwork() to verify
+// DNS resolution before spawning the PHAR for network-dependent handlers
+// (list_models, setup). After system suspend/resume the OS network stack
+// can take a moment to come back online — probing before the spawn lets us
+// retry in-process instead of failing the PHAR run with a cryptic curl error.
+const PROXY_HOST = "ai.panomatics.com";
+
+// 15 retries × 1000ms = 15s cap. Cold-start DNS (right after boot/wake)
+// can take several seconds to come online; the original 5×800ms budget
+// was too tight and surfaced false "ENOTFOUND" errors on real boots.
+async function waitForNetwork(host, { retries = 15, delayMs = 1000 } = {}) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await dns.lookup(host);
+      return;
+    } catch (err) {
+      if (i === retries - 1) throw new Error(`Host not reachable: ${host} (${err.code || err.message})`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+}
 
 // ---- File logger ----
 let logStream = null;
@@ -861,6 +884,14 @@ ipcMain.handle("undo", async () => {
 });
 
 ipcMain.handle("list_models", async () => {
+  // Post-hibernate wake can leave DNS unready for a few seconds. Probe the
+  // proxy host before spawning the PHAR so we can retry in-process rather
+  // than surfacing a "Could not resolve host" curl error from the backend.
+  try {
+    await waitForNetwork(PROXY_HOST);
+  } catch (e) {
+    return Promise.reject(`Network not ready: ${e.message}`);
+  }
   return new Promise((resolve, reject) => {
     // list_models does not need a tour folder — it hits the proxy directly.
     const { cmd, prefixArgs } = resolveBackend();
@@ -945,6 +976,12 @@ ipcMain.handle("list_models", async () => {
 });
 
 ipcMain.handle("setup", async (event, key, model, backupKeep) => {
+  // Same post-hibernate DNS probe as list_models — setup also hits the proxy.
+  try {
+    await waitForNetwork(PROXY_HOST);
+  } catch (e) {
+    return Promise.reject(`Network not ready: ${e.message}`);
+  }
   return new Promise((resolve, reject) => {
     // setup writes ~/.krpanocode/.env; no tour folder needed.
     const { cmd, prefixArgs } = resolveBackend();
@@ -1261,6 +1298,15 @@ function createWindow() {
 }
 
 // ---- App lifecycle ----
+// powerMonitor's "resume" event can fire multiple times in quick succession
+// on any OS (logind/UPower bursts on Linux, lid-open + session-unlock on
+// macOS, etc.). Coalesce with a 2s debounce; redundant events are dropped
+// at the source. The renderer's single-flight guard on loadModels() handles
+// any residual duplicates that slip through, so this is a belt-and-braces
+// optimization rather than a correctness requirement.
+let lastResumeAt = 0;
+const RESUME_DEBOUNCE_MS = 2_000;
+
 app.whenReady().then(() => {
   isDev = process.argv.includes("--dev");
   initLogger();
@@ -1269,6 +1315,22 @@ app.whenReady().then(() => {
   checkUpdatesOnStartup();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+
+  // System suspend/resume: after hibernation the network may take a moment
+  // to come back. Tell the renderer so it can re-fetch the model list
+  // (the only auto-fired network call on resume) — see App.tsx listener.
+  powerMonitor.on("resume", () => {
+    const now = Date.now();
+    if (now - lastResumeAt < RESUME_DEBOUNCE_MS) {
+      console.log("[powerMonitor] resume ignored (debounce)");
+      return;
+    }
+    lastResumeAt = now;
+    console.log("[powerMonitor] system resumed");
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("system_resume");
+    }
   });
 });
 

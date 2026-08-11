@@ -384,6 +384,83 @@ function TurnRow({ turn }: { turn: ConversationTurn }) {
         </div>
       );
     }
+    case "model_usage": {
+      const phaseColor =
+        turn.phase === "clarify"
+          ? "text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/30"
+          : turn.phase === "edit"
+            ? "text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30"
+            : "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30";
+      return (
+        <div className="mb-2 flex gap-3">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-xs flex-wrap">
+              <span className={`px-1.5 py-0.5 rounded font-medium ${phaseColor}`}>
+                {turn.phase}
+              </span>
+              <span className="font-mono text-muted-foreground">{turn.model}</span>
+              <span className="ml-auto text-muted-foreground tabular-nums">
+                {turn.total_tokens.toLocaleString()}
+              </span>
+            </div>
+            <div className="ml-6 mt-0.5 text-[11px] text-muted-foreground">
+              ↑ {turn.prompt_tokens.toLocaleString()} · ↓ {turn.completion_tokens.toLocaleString()}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    case "model_usage_summary": {
+      const retryTotal = turn.retries.reduce((sum, r) => sum + r.total_tokens, 0);
+      return (
+        <div className="mb-4 flex gap-3 border-l-2 border-emerald-500/60 pl-4 ml-2">
+          <div className="flex-shrink-0 w-20 text-center text-xs text-muted-foreground pt-0.5">
+            {formatTime(turn.timestamp)}
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-sm mb-1.5">
+              <span className="text-emerald-600 dark:text-emerald-400 font-medium">📊 Usage Summary</span>
+              <span className="font-mono text-xs text-muted-foreground">{turn.model}</span>
+            </div>
+            <div className="text-xs space-y-0.5 text-muted-foreground">
+              {turn.clarify && (
+                <div>
+                  <span className="inline-block w-16 text-violet-600 dark:text-violet-400">Clarify</span>
+                  <span className="tabular-nums">{turn.clarify.total_tokens.toLocaleString()}</span>
+                  <span className="text-[11px] text-muted-foreground/70 ml-2">
+                    ↑{turn.clarify.prompt_tokens.toLocaleString()} ↓{turn.clarify.completion_tokens.toLocaleString()}
+                  </span>
+                </div>
+              )}
+              {turn.edit && (
+                <div>
+                  <span className="inline-block w-16 text-sky-600 dark:text-sky-400">Edit</span>
+                  <span className="tabular-nums">{turn.edit.total_tokens.toLocaleString()}</span>
+                  <span className="text-[11px] text-muted-foreground/70 ml-2">
+                    ↑{turn.edit.prompt_tokens.toLocaleString()} ↓{turn.edit.completion_tokens.toLocaleString()}
+                  </span>
+                </div>
+              )}
+              {turn.retries.length > 0 && (
+                <div>
+                  <span className="inline-block w-16 text-amber-600 dark:text-amber-400">
+                    Retries ({turn.retries.length})
+                  </span>
+                  <span className="tabular-nums">{retryTotal.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="pt-1 mt-1 border-t border-border/40">
+                <span className="inline-block w-16 font-medium text-foreground">Total</span>
+                <span className="font-medium tabular-nums text-foreground">{turn.grand_total.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
     case "model_done": {
       return (
         <div className="mb-4 flex gap-3">
@@ -510,6 +587,14 @@ export function ConversationLog() {
           return `[${time}] Tool: ${t.toolName}${t.file ? ` ${t.file}` : ""}${t.files && t.files.length > 0 ? ` ${t.files.join(", ")}` : ""}${t.query ? ` "${t.query}"` : ""}${typeof t.bytes === "number" ? ` ${t.bytes}B` : ""}${typeof t.ms === "number" ? ` ${(t.ms / 1000).toFixed(1)}s` : ""}`;
         case "model_diff":
           return `[${time}] Diff: ${t.file} (${t.hunks.length} hunks)`;
+        case "model_usage":
+          return `[${time}] Usage (${t.phase}): ${t.total_tokens} tokens (${t.prompt_tokens} prompt, ${t.completion_tokens} completion) [${t.model}]`;
+        case "model_usage_summary":
+          return `[${time}] Usage Summary [${t.model}]: ` +
+            (t.clarify ? `clarify=${t.clarify.total_tokens} tokens ` : "") +
+            (t.edit ? `edit=${t.edit.total_tokens} tokens ` : "") +
+            (t.retries.length ? `retries=${t.retries.reduce((s, r) => s + r.total_tokens, 0)} tokens (${t.retries.length} attempts) ` : "") +
+            `grand_total=${t.grand_total} tokens`;
         case "model_done":
           return `[${time}] Done${typeof t.ms === "number" ? ` in ${(t.ms / 1000).toFixed(1)}s` : ""}`;
         case "model_error":

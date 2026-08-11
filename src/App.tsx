@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -13,7 +13,7 @@ import { EditDiffLineModal } from "@/modals/EditDiffLineModal";
 import { HelpModal } from "@/components/HelpModal";
 import { useAppStore } from "@/stores/appStore";
 import { usePharStream } from "@/hooks/usePharStream";
-import { invoke } from "@/lib/electron";
+import { invoke, on } from "@/lib/electron";
 
 function useApplyTheme() {
   const theme = useAppStore((s) => s.theme);
@@ -45,6 +45,45 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
+  // Single-flight guard: at most one loadModels is in-flight at a time.
+  // A second call (e.g. system_resume firing during startup) sees the ref
+  // populated and returns immediately — the in-flight call's store writes
+  // win, and the second call would have fetched identical data anyway.
+  // The ref is cleared in finally so a later genuine trigger can run fresh.
+  // This is OS-agnostic and eliminates the store-clobbering race that
+  // powerMonitor resume bursts were causing on Linux logind.
+  const loadModelsInFlight = useRef<Promise<void> | null>(null);
+
+  const loadModels = useCallback(async () => {
+    if (loadModelsInFlight.current) return;
+    const p = (async () => {
+      try {
+        const models = await invoke<string[]>("list_models");
+        setModels(models);
+        setModelsLoadFailed(false);
+        const savedModel = await invoke<string | null>("get_preference", "selectedModel");
+        if (models.length > 0 && !savedModel) {
+          setSelectedModel(models[0]);
+        }
+      } catch (err) {
+        console.error("Failed to load models:", err);
+        setModelsLoadFailed(true);
+      } finally {
+        setModelsLoading(false);
+        loadModelsInFlight.current = null;
+      }
+    })();
+    loadModelsInFlight.current = p;
+    await p;
+  }, [setModels, setModelsLoadFailed, setSelectedModel, setModelsLoading]);
+
+  // Ref so the system_resume handler can always call the latest loadModels
+  // without re-subscribing the ipc listener on every identity change.
+  const loadModelsRef = useRef(loadModels);
+  useEffect(() => {
+    loadModelsRef.current = loadModels;
+  }, [loadModels]);
+
   // Load saved preferences and models on startup
   useEffect(() => {
     const loadPreferences = async () => {
@@ -63,27 +102,27 @@ export default function App() {
       }
     };
 
-    const loadModels = async () => {
-      try {
-        const models = await invoke<string[]>("list_models");
-        setModels(models);
-        setModelsLoadFailed(false);
-
-        // Set initial model if none saved
-        const savedModel = await invoke<string | null>("get_preference", "selectedModel");
-        if (models.length > 0 && !savedModel) {
-          setSelectedModel(models[0]);
-        }
-      } catch (err) {
-        console.error("Failed to load models:", err);
-        setModelsLoadFailed(true);
-      } finally {
-        setModelsLoading(false);
-      }
-    };
-
     Promise.all([loadPreferences(), loadModels()]);
-  }, [setSelectedModel, setAutoApproveFileScope, setModels, setModelsLoading, setModelsLoadFailed, setRecentTours]);
+  }, [loadModels, setSelectedModel, setAutoApproveFileScope, setModels, setRecentTours]);
+
+  // System resume (post-hibernation): re-fetch models. The main process
+  // probes DNS before spawning the PHAR, so we can safely re-fire here.
+  // Mount-only subscription — loadModelsRef holds the latest callback.
+  // Race-free cleanup handles on() Promise resolving before/after unmount.
+  useEffect(() => {
+    let disposed = false;
+    let unsub: (() => void) | undefined;
+    on("system_resume", () => {
+      if (!disposed) loadModelsRef.current();
+    }).then((u) => {
+      if (disposed) u();
+      else unsub = u;
+    });
+    return () => {
+      disposed = true;
+      if (unsub) unsub();
+    };
+  }, []);
 
   if (!tour) {
     return (

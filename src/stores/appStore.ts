@@ -8,6 +8,8 @@ import type {
   LastEdit,
   Phase,
   PharEvent,
+  UsageEvent,
+  UsageSummaryEvent,
 } from "@/lib/types";
 
 export interface TourInfo {
@@ -103,6 +105,15 @@ interface AppState {
     count: number;    // how many lines the hunk spans in the NEW file
     hunkIndex: number;  // index into diffs[file].hunks
   } | null;
+  // --- token usage (accumulated during a run) ---
+  // Per-API-call usage events for the current run, in arrival order. Lets the
+  // ActivityLog render a row per API response (clarify/edit/retry) as it lands.
+  // Cleared on beginRun/openTour/closeTour.
+  usageEvents: UsageEvent[];
+  // Final aggregated usage summary emitted near the end of a run (before
+  // `done`). Carries the full breakdown across clarify/edit/retries +
+  // grand_total. Null until the `usage_summary` event arrives.
+  usageSummary: UsageSummaryEvent | null;
   // --- conversation log ---
   conversation: ConversationTurn[];
   addConversationTurn: (turn: ConversationTurn) => void;
@@ -155,6 +166,10 @@ interface AppState {
   // After the EditDiffLineModal saves the file on disk, update the matching
   // hunk's `new` field in `diffs` so the DiffViewer reflects the manual edit.
   applyHunkEdit: (file: string, hunkIndex: number, newNew: string) => void;
+  // Accumulate a per-API-call usage event for the current run.
+  addUsageEvent: (usage: UsageEvent) => void;
+  // Set the final usage summary at the end of a run.
+  setUsageSummary: (summary: UsageSummaryEvent | null) => void;
 
   // The central event handler — dispatches any PHAR event into state changes.
   applyPharEvent: (ev: PharEvent) => void;
@@ -200,10 +215,12 @@ modelsLoading: true,
   validationRetry: null,
   planFiles: null,
   editingHunk: null,
+  usageEvents: [],
+  usageSummary: null,
   recentTours: [],
 
   setPhase: (p) => set({ phase: p }),
-  beginRun: () => set({ phase: "working", runStartedAt: Date.now(), editingHunk: null }),
+  beginRun: () => set({ phase: "working", runStartedAt: Date.now(), editingHunk: null, usageEvents: [], usageSummary: null }),
   endRun: (p) => set({ phase: p, runStartedAt: null }),
   // Seed lastEdit at the start of a run. pendingClarifyAnswer is reset so a
   // leftover answer from a previous run can't bleed into this one. The
@@ -218,6 +235,8 @@ modelsLoading: true,
       validationRetry: null,
       planFiles: null,
       editingHunk: null,
+      usageEvents: [],
+      usageSummary: null,
     }),
   // Build the merged instruction for a resumed edit. Returns null when there
   // is nothing to resume, or when the currently-open tour doesn't match the
@@ -252,6 +271,8 @@ modelsLoading: true,
       validationRetry: null,
       planFiles: null,
       editingHunk: null,
+      usageEvents: [],
+      usageSummary: null,
     }),
   closeTour: () =>
     set({
@@ -272,6 +293,8 @@ modelsLoading: true,
       validationRetry: null,
       planFiles: null,
       editingHunk: null,
+      usageEvents: [],
+      usageSummary: null,
     }),
   clearActivity: () => set({ activity: [] }),
   clearDiffs: () => set({ diffs: [], editingHunk: null }),
@@ -305,6 +328,9 @@ modelsLoading: true,
         };
       }),
     })),
+  addUsageEvent: (usage) =>
+    set((s) => ({ usageEvents: [...s.usageEvents, usage] })),
+  setUsageSummary: (summary) => set({ usageSummary: summary }),
   // conversation log
   addConversationTurn: (turn) => set((s) => ({ conversation: [...s.conversation, turn] })),
   clearConversation: () => set({ conversation: [] }),
@@ -567,6 +593,34 @@ modelsLoading: true,
           httpCode: httpCode ?? undefined,
           retryAttempts: evTyped.retry_attempts,
           httpHeaders: evTyped.http_headers,
+          timestamp: now,
+        });
+        return;
+      }
+      case "usage": {
+        const u = ev as unknown as UsageEvent;
+        set((s) => ({ usageEvents: [...s.usageEvents, u] }));
+        get().addConversationTurn({
+          kind: "model_usage",
+          phase: u.phase,
+          prompt_tokens: u.prompt_tokens,
+          completion_tokens: u.completion_tokens,
+          total_tokens: u.total_tokens,
+          model: u.model,
+          timestamp: now,
+        });
+        return;
+      }
+      case "usage_summary": {
+        const us = ev as unknown as UsageSummaryEvent;
+        set({ usageSummary: us });
+        get().addConversationTurn({
+          kind: "model_usage_summary",
+          clarify: us.clarify,
+          edit: us.edit,
+          retries: us.retries,
+          grand_total: us.grand_total,
+          model: us.model,
           timestamp: now,
         });
         return;
