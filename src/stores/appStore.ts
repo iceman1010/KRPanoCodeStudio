@@ -56,6 +56,10 @@ interface AppState {
   autoApproveFileScope: boolean;
   modelsLoading: boolean;
   modelsLoadFailed: boolean;
+  // --- CLI backend availability (from check_backend IPC) ---
+  // True when the CLI engine can't run (missing PHAR / missing PHP). Set by
+  // App.tsx on startup; cleared after a successful CLI download.
+  cliMissing: boolean;
   // --- UI prefs ---
   theme: "light" | "dark" | "system";
   showReasoning: boolean;
@@ -145,6 +149,7 @@ interface AppState {
   setAutoApproveFileScope: (b: boolean) => void;
   setModelsLoading: (b: boolean) => void;
   setModelsLoadFailed: (b: boolean) => void;
+  setCliMissing: (b: boolean) => void;
   setTheme: (t: "light" | "dark" | "system") => void;
   setShowReasoning: (b: boolean) => void;
   setLastPrompt: (p: string, clarify: boolean) => void;
@@ -199,8 +204,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   models: [],
   selectedModel: null,
   autoApproveFileScope: false,
-modelsLoading: true,
+  modelsLoading: true,
   modelsLoadFailed: false,
+  cliMissing: false,
   // --- conversation log ---
   conversation: [],
   // --- UI prefs ---
@@ -305,6 +311,7 @@ modelsLoading: true,
   setAutoApproveFileScope: (b) => set({ autoApproveFileScope: b }),
   setModelsLoading: (b) => set({ modelsLoading: b }),
   setModelsLoadFailed: (b) => set({ modelsLoadFailed: b }),
+  setCliMissing: (b) => set({ cliMissing: b }),
   setTheme: (t) => set({ theme: t }),
   setShowReasoning: (b) => set({ showReasoning: b }),
   setLastPrompt: (p, clarify) => set({ lastPrompt: p, lastClarify: clarify }),

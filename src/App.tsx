@@ -6,6 +6,8 @@ import { TopBar } from "@/components/TopBar";
 import { Preview } from "@/components/Preview";
 import { UpdateNotificationModal } from "@/components/UpdateNotificationModal";
 import { IdleTimeoutModal } from "@/components/IdleTimeoutModal";
+import { CliMissingModal } from "@/components/CliMissingModal";
+import type { CliIssue } from "@/components/CliMissingModal";
 import { RightPanel } from "@/components/right-panel/RightPanel";
 import { EmptyState } from "@/states/EmptyState";
 import { SettingsModal } from "@/modals/SettingsModal";
@@ -45,8 +47,10 @@ export default function App() {
   const setModelsLoading = useAppStore((s) => s.setModelsLoading);
   const setModelsLoadFailed = useAppStore((s) => s.setModelsLoadFailed);
   const setRecentTours = useAppStore((s) => s.setRecentTours);
+  const setCliMissing = useAppStore((s) => s.setCliMissing);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [cliIssue, setCliIssue] = useState<CliIssue | null>(null);
 
   // Single-flight guard: at most one loadModels is in-flight at a time.
   // A second call (e.g. system_resume firing during startup) sees the ref
@@ -87,8 +91,11 @@ export default function App() {
     loadModelsRef.current = loadModels;
   }, [loadModels]);
 
-  // Load saved preferences and models on startup
+  // Load saved preferences and models on startup. The backend is checked
+  // FIRST: if the CLI engine (PHAR/PHP) is unusable we skip the model load
+  // entirely (it could only fail) and show the CLI-missing modal instead.
   useEffect(() => {
+    let cancelled = false;
     const loadPreferences = async () => {
       try {
         const selectedModel = await invoke<string | null>("get_preference", "selectedModel");
@@ -105,8 +112,37 @@ export default function App() {
       }
     };
 
-    Promise.all([loadPreferences(), loadModels()]);
-  }, [loadModels, setSelectedModel, setAutoApproveFileScope, setModels, setRecentTours]);
+    const checkBackendThenLoad = async () => {
+      try {
+        const check = await invoke<{ ok: boolean; reason: CliIssue | null }>("check_backend");
+        if (cancelled) return;
+        if (!check.ok && check.reason) {
+          console.error("Backend unavailable:", check.reason);
+          setCliMissing(true);
+          setCliIssue(check.reason);
+          setModelsLoading(false);
+          return; // no point loading models with a dead backend
+        }
+      } catch (err) {
+        // Diagnosis itself failed — fall through and let loadModels surface
+        // the real error rather than blocking the app here.
+        console.error("check_backend failed:", err);
+      }
+      loadModels();
+    };
+
+    Promise.all([loadPreferences(), checkBackendThenLoad()]);
+    return () => { cancelled = true; };
+  }, [loadModels, setSelectedModel, setAutoApproveFileScope, setModels, setRecentTours, setCliMissing, setModelsLoading]);
+
+  // Called by CliMissingModal after a successful CLI download: clear the
+  // blockage and run the model load that was skipped at startup.
+  const handleCliFixed = useCallback(() => {
+    setCliMissing(false);
+    setCliIssue(null);
+    setModelsLoading(true);
+    loadModels();
+  }, [loadModels, setCliMissing, setModelsLoading]);
 
   // System resume (post-hibernation): re-fetch models. The main process
   // probes DNS before spawning the PHAR, so we can safely re-fire here.
@@ -139,6 +175,7 @@ export default function App() {
           <HelpModal open={helpOpen} onOpenChange={setHelpOpen} />
           <UpdateNotificationModal />
           <IdleTimeoutModal />
+          <CliMissingModal issue={cliIssue} onFixed={handleCliFixed} />
           <Toaster richColors position="bottom-right" />
         </div>
       </TooltipProvider>
@@ -172,7 +209,8 @@ export default function App() {
           <EditDiffLineModal />
         <HelpModal open={helpOpen} onOpenChange={setHelpOpen} />
         <UpdateNotificationModal />
-          <IdleTimeoutModal />
+        <IdleTimeoutModal />
+        <CliMissingModal issue={cliIssue} onFixed={handleCliFixed} />
         <Toaster richColors position="bottom-right" />
       </div>
     </TooltipProvider>

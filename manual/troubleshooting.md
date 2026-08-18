@@ -6,6 +6,29 @@ them. If you can't find your problem here, open the **Conversation log** and
 
 ---
 
+## App stuck on "Loading models…" / "CLI missing" in the top bar
+
+On first start the app checks that its editing engine (the `krpanocode.phar`
+CLI and the PHP runtime it needs) is actually present. If either is missing,
+the top bar shows **CLI missing** and a dialog explains what to do:
+
+- **"CLI engine missing"** — the `krpanocode.phar` file isn't on the machine
+  (for example a damaged install, or antivirus removed it). The dialog offers
+  a **Download CLI** button that fetches the latest release from GitHub and
+  installs it automatically. After the download the model list loads by
+  itself — no restart needed.
+- **"App installation incomplete"** — the bundled PHP runtime is missing.
+  PHP ships *inside* the installer, so if it's gone the installation itself
+  is damaged. Reinstall from the
+  [releases page](https://github.com/iceman1010/KRpanoCodeStudio/releases)
+  (and add an antivirus exception for the app folder if one removed files).
+
+If a download fails, the dialog tells you *why* — network unreachable,
+permission denied (often antivirus on Windows), or a corrupt download — with
+a **Retry** button.
+
+---
+
 ## "No API key" badge in the top bar
 
 The app hasn't been configured with an API key yet.

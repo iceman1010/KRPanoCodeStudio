@@ -34,6 +34,7 @@ export function TopBar({ onOpenSettings, onOpenHelp }: TopBarProps) {
   const models = useAppStore((s) => s.models);
   const modelsLoading = useAppStore((s) => s.modelsLoading);
   const modelsLoadFailed = useAppStore((s) => s.modelsLoadFailed);
+  const cliMissing = useAppStore((s) => s.cliMissing);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const openTour = useAppStore((s) => s.openTour);
   const closeTour = useAppStore((s) => s.closeTour);
@@ -107,6 +108,13 @@ export function TopBar({ onOpenSettings, onOpenHelp }: TopBarProps) {
             ))}
           </SelectContent>
         </Select>
+      ) : cliMissing ? (
+        <div
+          className="flex items-center gap-1.5 text-xs text-destructive"
+          title="The CLI engine is missing or unusable. Follow the dialog to fix it."
+        >
+          CLI missing
+        </div>
       ) : modelsLoadFailed ? (
         <div
           className="flex items-center gap-1.5 text-xs text-destructive"

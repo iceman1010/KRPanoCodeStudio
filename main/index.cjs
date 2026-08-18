@@ -177,7 +177,11 @@ function pharBundledPath() {
   return path.join(process.resourcesPath, "krpanocode.phar");
 }
 function phpPath() {
-  return path.join(process.resourcesPath, "php", "bin", "php");
+  // Windows bundle ships php.exe (see docs/CICD.md); without the .exe suffix
+  // the existence check below always failed on Windows and the app silently
+  // fell back to the (un runnable there) Bash mock.
+  const bin = process.platform === "win32" ? "php.exe" : "php";
+  return path.join(process.resourcesPath, "php", "bin", bin);
 }
 
 // Copy the bundled PHAR to userData on first run so --update can rewrite it.
@@ -545,12 +549,30 @@ function stopWatcher() {
 
 // ---- PHAR / mock spawning ----
 function findSystemPhp() {
-  const candidates = [
-    "/usr/bin/php",
-    "/usr/local/bin/php",
-    "/opt/homebrew/bin/php",
-    "/opt/homebrew/opt/php/bin/php",
-  ];
+  const isWin = process.platform === "win32";
+  const exe = isWin ? "php.exe" : "php";
+  const candidates = [];
+  // PATH entries first — a user-installed PHP is the most likely hit.
+  for (const dir of (process.env.PATH || "").split(path.delimiter)) {
+    if (!dir) continue;
+    candidates.push(path.join(dir, exe));
+  }
+  if (isWin) {
+    candidates.push(
+      "C:\\php\\php.exe",
+      "C:\\xampp\\php\\php.exe",
+      "C:\\wamp64\\bin\\php\\php.exe",
+      "C:\\wamp\\bin\\php\\php.exe",
+      "C:\\laragon\\bin\\php\\php.exe",
+    );
+  } else {
+    candidates.push(
+      "/usr/bin/php",
+      "/usr/local/bin/php",
+      "/opt/homebrew/bin/php",
+      "/opt/homebrew/opt/php/bin/php",
+    );
+  }
   for (const c of candidates) if (fs.existsSync(c)) return c;
   return null;
 }
@@ -592,6 +614,16 @@ function resolveBackend() {
           `[backend] bundled PHP not found, using system PHP at ${sysPhp}`
         );
         return { cmd: sysPhp, prefixArgs: [...phpIniArgs, phar] };
+      }
+      // In a packaged app NEVER silently fall back to the Bash mock — it is
+      // unrunable on Windows and led to the "stuck loading models" bug.
+      // Surface a real error so check_backend / the CLI-missing modal can act.
+      if (app.isPackaged) {
+        const err = new Error(
+          `PHP interpreter not found. Tried bundled PHP at ${php} and system PHP on PATH. The app installation may be incomplete.`
+        );
+        console.error("[backend]", String(err));
+        throw err;
       }
       logBackendOnce(
         `mock:fallback`,
@@ -1071,6 +1103,173 @@ ipcMain.handle("backend_info", async () => {
     };
   } catch (err) {
     return Promise.reject(String(err));
+  }
+});
+
+// ---- CLI availability diagnosis + download ----
+
+// Non-spawning diagnosis of the backend. Mirrors resolveBackend()'s decision
+// tree so the renderer can decide BEFORE calling list_models whether the CLI
+// is usable, and pop the CLI-missing modal when it isn't.
+// Returns { ok, reason: null|"no_phar"|"no_php", isMock, pharPath, phpPath, phpSource }
+ipcMain.handle("check_backend", async () => {
+  const isWin = process.platform === "win32";
+  const result = {
+    ok: false,
+    reason: null,
+    isMock: false,
+    pharPath: null,
+    phpPath: null,
+    phpSource: null, // "bundled" | "system" | null
+  };
+  // Explicit dev-mock overrides → always fine.
+  if (process.env.KRPANOCODE_DEV_MOCK || process.env.KRPANOCODE_DEV === "1") {
+    return { ...result, ok: true, isMock: true };
+  }
+  // PHAR: present in userData, bundled, or seedable from the source repo?
+  let phar = null;
+  try {
+    phar = ensurePharReady();
+  } catch {
+    phar = null;
+  }
+  if (!phar) {
+    result.reason = "no_phar";
+    return result;
+  }
+  result.pharPath = phar;
+  // PHP: bundled first, system fallback second.
+  const bundled = phpPath();
+  if (fs.existsSync(bundled)) {
+    result.phpPath = bundled;
+    result.phpSource = "bundled";
+  } else {
+    const sys = findSystemPhp();
+    if (sys) {
+      result.phpPath = sys;
+      result.phpSource = "system";
+    }
+  }
+  if (!result.phpPath) {
+    // Dev without any PHP → mock is a legitimate backend there.
+    if (!app.isPackaged) {
+      const mockPath = path.join(__dirname, "mock", "krpanocode-mock");
+      if (fs.existsSync(mockPath)) return { ...result, ok: true, isMock: true };
+    }
+    result.reason = "no_php";
+    return result;
+  }
+  result.ok = true;
+  return result;
+});
+
+// Follow GitHub's release-asset redirects (release/download → objects.githubusercontent.com)
+// and stream the body to a file with progress callbacks.
+function downloadToFile(url, tmpPath, onProgress, redirectsLeft = 5) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      { headers: { "User-Agent": "KRPanoCodeStudio" } },
+      (res) => {
+        if (
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          res.resume();
+          if (redirectsLeft <= 0) return reject(new Error("too many redirects"));
+          return resolve(
+            downloadToFile(res.headers.location, tmpPath, onProgress, redirectsLeft - 1)
+          );
+        }
+        if (res.statusCode !== 200) {
+          res.resume();
+          const err = new Error(`HTTP ${res.statusCode} downloading ${url}`);
+          err.httpCode = res.statusCode;
+          return reject(err);
+        }
+        const total = parseInt(res.headers["content-length"] || "0", 10);
+        let received = 0;
+        const out = fs.createWriteStream(tmpPath);
+        res.on("data", (chunk) => {
+          received += chunk.length;
+          onProgress({ received, total });
+        });
+        res.on("error", (err) => { out.destroy(); reject(err); });
+        out.on("error", (err) => { res.destroy(); reject(err); });
+        out.on("finish", () => out.close(() => resolve({ received, total })));
+        res.pipe(out);
+      }
+    );
+    req.on("error", reject);
+    req.setTimeout(120000, () => {
+      req.destroy(new Error("Download timed out after 120s"));
+    });
+  });
+}
+
+// Map low-level download/write errors to a human-readable message. The
+// Windows-user bug report showed the value of saying WHAT went wrong
+// (network vs. permissions vs. corrupt file) instead of a raw errno.
+function describeDownloadError(err) {
+  const code = err && (err.code || (err.cause && err.cause.code));
+  const msg = String((err && err.message) || err);
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN" || code === "ECONNREFUSED" || code === "ETIMEDOUT" || /timed? ?out/i.test(msg)) {
+    return "Could not reach github.com — check your internet connection and try again.";
+  }
+  if (code === "EACCES" || code === "EPERM") {
+    return `Permission denied writing the CLI file (${pharUserPath()}). Check that your antivirus is not blocking the app folder and that you have write access.`;
+  }
+  if (err && err.httpCode === 404) {
+    return "The CLI was not found in the latest GitHub release (HTTP 404). The release may be incomplete — try again later.";
+  }
+  if (code === "EPROTO" || code === "CERT_HAS_EXPIRED" || /certificate/i.test(msg)) {
+    return "Secure connection to GitHub failed (TLS/certificate problem). Check your system clock and corporate proxy settings.";
+  }
+  return msg;
+}
+
+// Download the latest krpanocode.phar from the releases repo into userData.
+// Progress is streamed to the renderer as cli-download-progress events:
+//   { phase: "resolve" } | { phase: "download", received, total }
+//   | { phase: "verify" } | { phase: "done", version }
+// Resolves with the installed version string on success; rejects with a
+// human-readable message (see describeDownloadError) on failure.
+ipcMain.handle("download_cli", async () => {
+  const send = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("cli-download-progress", payload);
+    }
+  };
+  const tmp = pharUserPath() + ".download-" + Date.now();
+  try {
+    send({ phase: "resolve" });
+    const tag = await getLatestReleaseTag(); // "vX.Y.Z"
+    const version = tag.replace(/^v/, "");
+    const url = `https://github.com/iceman1010/krpanocode-releases/releases/download/v${version}/krpanocode.phar`;
+    console.log(`[cli-download] ${url}`);
+    send({ phase: "download", received: 0, total: 0 });
+    await downloadToFile(url, tmp, ({ received, total }) => {
+      send({ phase: "download", received, total });
+    });
+    // Validate PHAR magic before installing — same check as scripts/download-phar.sh.
+    send({ phase: "verify" });
+    const head = (await fsp.readFile(tmp)).subarray(0, 64).toString("latin1");
+    if (!head.includes("<?php") && !head.includes("Phar")) {
+      throw new Error(
+        "The downloaded file is not a valid CLI (PHAR) build — the download may be corrupted. Please try again."
+      );
+    }
+    // Atomic install: rename into place. ensurePharReady() will find it next run.
+    await fsp.rename(tmp, pharUserPath());
+    lastBackendKey = null; // force backend re-log
+    console.log(`[cli-download] installed v${version} to ${pharUserPath()}`);
+    send({ phase: "done", version });
+    return version;
+  } catch (err) {
+    console.error("[cli-download] failed:", String(err));
+    try { await fsp.unlink(tmp); } catch {}
+    return Promise.reject(describeDownloadError(err));
   }
 });
 
