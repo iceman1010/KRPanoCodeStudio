@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw, ShieldCheck, Download, FileText, Copy, Terminal } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck, Download, FileText, Copy, Terminal, FolderOpen, FlaskConical, XCircle, CheckCircle2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -73,6 +73,32 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [appUpdating, setAppUpdating] = useState(false);
   // CLI idle timeout in minutes (default 5, stored as ms in prefs)
   const [cliIdleMinutes, setCliIdleMinutes] = useState(5);
+  // --- Manual CLI setup ---
+  const [phpOverride, setPhpOverride] = useState("");
+  const [pharOverride, setPharOverride] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    cmd: string | null;
+    exitCode: number | null;
+    version: string | null;
+    error: string | null;
+    stdout: string;
+    stderr: string;
+  } | null>(null);
+  const refreshBackendUi = () => {
+    invoke<string>("phar_version")
+      .then((v) => setPharVersion(v))
+      .catch(() => setPharVersion(null));
+    invoke<{
+      cmd: string;
+      prefixArgs: string[];
+      pharPath: string | null;
+      isMock: boolean;
+    }>("backend_info")
+      .then(setBackendInfo)
+      .catch(() => {});
+  };
 
   // Load models + PHAR version on first open.
   useEffect(() => {
@@ -113,6 +139,12 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
           setCliIdleMinutes(Math.round(v / 60000));
         }
       })
+      .catch(() => {});
+    invoke<string | null>("get_preference", "cliPhpOverride")
+      .then((v) => setPhpOverride(typeof v === "string" ? v : ""))
+      .catch(() => {});
+    invoke<string | null>("get_preference", "cliPharOverride")
+      .then((v) => setPharOverride(typeof v === "string" ? v : ""))
       .catch(() => {});
   }, [open, setModels]);
 
@@ -250,6 +282,55 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setUpdating(false);
+    }
+  }
+
+  async function saveOverride(key: "cliPhpOverride" | "cliPharOverride", value: string) {
+    // Empty string clears the override (null in prefs) — auto-detection takes over again.
+    try {
+      await invoke("set_preference", key, value.trim() ? value.trim() : null);
+    } catch (err) {
+      toast.error(cleanErr(err));
+    }
+  }
+
+  async function browseFile(kind: "php" | "phar", set: (v: string) => void, saveKey: "cliPhpOverride" | "cliPharOverride") {
+    try {
+      const p = await invoke<string | null>("pick_file", kind);
+      if (!p) return;
+      set(p);
+      await saveOverride(saveKey, p);
+      setTestResult(null);
+      refreshBackendUi();
+    } catch (err) {
+      toast.error(cleanErr(err));
+    }
+  }
+
+  async function clearOverrides() {
+    setPhpOverride("");
+    setPharOverride("");
+    setTestResult(null);
+    await saveOverride("cliPhpOverride", "");
+    await saveOverride("cliPharOverride", "");
+    refreshBackendUi();
+    toast.info("Manual CLI paths cleared — automatic detection is active again");
+  }
+
+  async function runBackendTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await invoke<NonNullable<typeof testResult>>("test_backend");
+      setTestResult(r);
+      if (r.ok) {
+        toast.success(`CLI works — version ${r.version}`);
+        refreshBackendUi();
+      }
+    } catch (err) {
+      toast.error(cleanErr(err));
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -573,6 +654,135 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                   </Button>
                 </div>
               </div>
+            </div>
+            {/* ---- Manual CLI setup (advanced) ---- */}
+            <div className="col-span-full rounded-lg border p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Manual CLI setup (advanced)
+                </span>
+                {testResult && (
+                  <Badge variant={testResult.ok ? "secondary" : "destructive"}>
+                    {testResult.ok ? `CLI v${testResult.version} OK` : "CLI test failed"}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                If automatic detection picks the wrong engine — or nothing works
+                and errors look cryptic — point the app directly at the files.
+                Leave both fields empty to use automatic detection (bundled
+                files first, then system-wide). Changes take effect on the
+                next CLI call.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="phpOverride" className="text-[11px]">
+                    PHP interpreter{phpOverride ? "" : " (auto-detected)"}
+                  </Label>
+                  <div className="flex gap-1.5">
+                    <Input
+                      id="phpOverride"
+                      value={phpOverride}
+                      placeholder={backendInfo && !backendInfo.isMock ? backendInfo.cmd : "Automatic"}
+                      onChange={(e) => setPhpOverride(e.target.value)}
+                      onBlur={() => saveOverride("cliPhpOverride", phpOverride)}
+                      className="font-mono text-[11px]"
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => browseFile("php", setPhpOverride, "cliPhpOverride")}
+                      title="Browse for php.exe / php"
+                    >
+                      <FolderOpen className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="pharOverride" className="text-[11px]">
+                    krpanocode CLI file (.phar)
+                  </Label>
+                  <div className="flex gap-1.5">
+                    <Input
+                      id="pharOverride"
+                      value={pharOverride}
+                      placeholder={backendInfo?.pharPath ?? "Automatic"}
+                      onChange={(e) => setPharOverride(e.target.value)}
+                      onBlur={() => saveOverride("cliPharOverride", pharOverride)}
+                      className="font-mono text-[11px]"
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => browseFile("phar", setPharOverride, "cliPharOverride")}
+                      title="Browse for krpanocode.phar"
+                    >
+                      <FolderOpen className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={runBackendTest}
+                  disabled={testing}
+                  className="text-xs"
+                >
+                  {testing ? (
+                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                  ) : (
+                    <FlaskConical className="mr-1.5 h-3 w-3" />
+                  )}
+                  Test CLI
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearOverrides}
+                  disabled={!phpOverride && !pharOverride}
+                  className="text-xs"
+                >
+                  Use automatic detection
+                </Button>
+              </div>
+              {testResult && (
+                <div className="space-y-1.5">
+                  <div
+                    className={`flex items-start gap-1.5 text-[11px] ${
+                      testResult.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
+                    }`}
+                  >
+                    {testResult.ok ? (
+                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span>
+                      {testResult.ok
+                        ? `The CLI runs and reports version ${testResult.version}.`
+                        : testResult.error ??
+                          `The CLI failed (exit code ${testResult.exitCode ?? "?"}).`}
+                    </span>
+                  </div>
+                  {!testResult.ok && (testResult.stderr || testResult.stdout) && (
+                    <div className="rounded-md border bg-muted/40 p-2 font-mono text-[10px] leading-relaxed text-muted-foreground max-h-40 overflow-y-auto">
+                      {testResult.cmd && <div className="mb-1 break-all">$ {testResult.cmd}</div>}
+                      {testResult.stderr && (
+                        <div className="whitespace-pre-wrap break-all text-destructive/90">
+                          {testResult.stderr.slice(-800)}
+                        </div>
+                      )}
+                      {testResult.stdout && (
+                        <div className="whitespace-pre-wrap break-all">
+                          {testResult.stdout.slice(-800)}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

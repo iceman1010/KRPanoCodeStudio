@@ -119,6 +119,29 @@ release there during install.
 
 ---
 
+## Manual CLI setup (advanced)
+
+When automatic detection of the editing engine fails or picks the wrong
+files, you can set them by hand. Both fields accept full paths:
+
+- **PHP interpreter** — e.g. `C:\php\php.exe` (Windows) or `/usr/bin/php`.
+  Empty = automatic (bundled runtime first, then a system-wide install found
+  on your PATH).
+- **krpanocode CLI file** — the path to a `krpanocode.phar`. Empty = the
+  copy installed in the app data folder.
+
+Buttons:
+
+- **Test CLI** — runs the configured engine with `--version` and shows the
+  result. On failure it prints the exact command, the exit code, and the
+  engine's error output — this is what to attach to a bug report instead of
+  a "cryptic exit code".
+- **Use automatic detection** — clears both manual paths.
+
+Changes take effect on the next CLI call; no restart needed.
+
+---
+
 ## What's where at a glance
 
 | Thing | File / Folder |

@@ -105,7 +105,7 @@ export function CliMissingModal({ issue, onFixed }: CliMissingModalProps) {
           </DialogTitle>
           <DialogDescription>
             {issue === "no_php"
-              ? "The PHP runtime that ships with KRpanoCode Studio could not be found, and no system PHP is installed."
+              ? "No usable PHP interpreter was found — either the app installation is incomplete, or a manually set PHP path in Settings is wrong."
               : "The krpanocode CLI (krpanocode.phar) could not be found on this machine."}
           </DialogDescription>
         </DialogHeader>
@@ -118,9 +118,11 @@ export function CliMissingModal({ issue, onFixed }: CliMissingModalProps) {
               damaged or was blocked (for example by antivirus software).
             </p>
             <p className="text-muted-foreground">
-              Please reinstall KRpanoCode Studio from the releases page. If your
-              antivirus quarantined files, add an exception for the app folder
-              first.
+              Check Settings → <strong>Manual CLI setup</strong> first: if a PHP
+              path is set there, make sure it points to an existing file.
+              Otherwise, reinstall KRpanoCode Studio from the releases page. If
+              your antivirus quarantined files, add an exception for the app
+              folder first.
             </p>
           </div>
         ) : (

@@ -27,6 +27,11 @@ If a download fails, the dialog tells you *why* — network unreachable,
 permission denied (often antivirus on Windows), or a corrupt download — with
 a **Retry** button.
 
+Related: **Settings → Manual CLI setup** lets you bypass detection entirely
+by setting the PHP interpreter and `.phar` file paths by hand, and **Test
+CLI** shows the exact command, exit code, and error output when something
+still refuses to run.
+
 ---
 
 ## "No API key" badge in the top bar

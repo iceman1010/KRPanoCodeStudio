@@ -224,6 +224,7 @@ function getPharVersion() {
     });
     let settled = false;
     let out = "";
+    let errOut = "";
     const onIdleFire = () => {
       notifyIdleTimeout(
         "version",
@@ -237,11 +238,19 @@ function getPharVersion() {
       );
     };
     child.stdout.on("data", (d) => { out += d.toString(); });
+    child.stderr.on("data", (d) => { errOut += d.toString(); });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       disarmIdleTimer();
-      if (code !== 0) return reject(`version check exited ${code}`);
+      if (code !== 0) {
+        const tail = errOut.trim().slice(-400) || out.trim().slice(-400);
+        return reject(
+          tail
+            ? `version check exited ${code}: ${tail}`
+            : `version check exited ${code}`
+        );
+      }
       const lines = out.trim().split("\n");
       for (let i = lines.length - 1; i >= 0; i--) {
         const line = lines[i].trim();
@@ -262,6 +271,99 @@ function getPharVersion() {
     armIdleTimer(onIdleFire);
   });
 }
+
+// Full-fidelity backend test for Settings → Manual CLI setup. Unlike
+// phar_version (version string or die), this NEVER throws: it returns
+// everything needed to diagnose a broken CLI setup — the exact command run,
+// exit code, stdout/stderr tails, and the parsed version when present.
+ipcMain.handle("test_backend", async () => {
+  let backend;
+  try {
+    backend = resolveBackend();
+  } catch (err) {
+    return {
+      ok: false,
+      cmd: null,
+      exitCode: null,
+      version: null,
+      error: String(err),
+      stdout: "",
+      stderr: "",
+    };
+  }
+  const { cmd, prefixArgs } = backend;
+  return new Promise((resolve) => {
+    const child = spawn(cmd, [...prefixArgs, "--json", "--version"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    let errOut = "";
+    let done = false;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      disarmIdleTimer();
+      resolve(result);
+    };
+    const onIdleFire = () => {
+      notifyIdleTimeout(
+        "version",
+        () => {
+          try { child.kill(); } catch {}
+          finish({
+            ok: false,
+            cmd: `${cmd} ${[...prefixArgs, "--json", "--version"].join(" ")}`,
+            exitCode: null,
+            version: null,
+            error: "Aborted: no output for the idle timeout.",
+            stdout: out.slice(-2000),
+            stderr: errOut.slice(-2000),
+          });
+        },
+        () => armIdleTimer(onIdleFire),
+      );
+    };
+    child.stdout.on("data", (d) => { out += d.toString(); });
+    child.stderr.on("data", (d) => { errOut += d.toString(); });
+    child.on("error", (err) => {
+      finish({
+        ok: false,
+        cmd: `${cmd} ${[...prefixArgs, "--json", "--version"].join(" ")}`,
+        exitCode: null,
+        version: null,
+        error: `Could not start "${cmd}": ${err.message}`,
+        stdout: out.slice(-2000),
+        stderr: errOut.slice(-2000),
+      });
+    });
+    child.on("close", (code) => {
+      let version = null;
+      for (const line of out.split("\n")) {
+        const t = line.trim();
+        if (!t) continue;
+        try {
+          const evt = JSON.parse(t);
+          if (evt.type === "version" && evt.version) version = evt.version;
+        } catch {}
+      }
+      finish({
+        ok: code === 0 && !!version,
+        cmd: `${cmd} ${[...prefixArgs, "--json", "--version"].join(" ")}`,
+        exitCode: code,
+        version,
+        error:
+          code === 0 && version
+            ? null
+            : code === 0
+              ? "The CLI exited cleanly but no version was reported — the file may not be a valid krpanocode CLI build."
+              : null,
+        stdout: out.slice(-2000),
+        stderr: errOut.slice(-2000),
+      });
+    });
+    armIdleTimer(onIdleFire);
+  });
+});
 
 // Hit GitHub's redirect endpoint for /releases/latest → returns "vX.Y.Z".
 function getLatestReleaseTag() {
@@ -595,8 +697,19 @@ function resolveBackend() {
       const mockPath = path.join(__dirname, "mock", "krpanocode-mock");
       return { cmd: mockPath, prefixArgs: [] };
     }
-    // prod: php + writable phar copy in userData (so --update can rewrite it)
-    const phar = ensurePharReady();
+    // Manual overrides from Settings → Manual CLI setup. These win over all
+    // automatic detection so a user can point the app at a known-good PHP
+    // interpreter / PHAR when bundling or PATH detection fails them.
+    const prefs = loadPreferences();
+    const phpOverride =
+      typeof prefs.cliPhpOverride === "string" && prefs.cliPhpOverride.trim()
+        ? prefs.cliPhpOverride.trim()
+        : null;
+    const pharOverride =
+      typeof prefs.cliPharOverride === "string" && prefs.cliPharOverride.trim()
+        ? prefs.cliPharOverride.trim()
+        : null;
+    const phar = pharOverride || ensurePharReady();
     // PHP ini override: default_socket_timeout (60s by default) applies to
     // piped STDIN, causing fgets(STDIN) in jsonClarify() to return false
     // after one minute even when the pipe is open and the user simply hasn't
@@ -605,6 +718,18 @@ function resolveBackend() {
     // bound when the STDIN stream is first opened, before the script runs.
     // See https://github.com/iceman1010/KRPano_LLM_code commit 48b5a43 context.
     const phpIniArgs = ["-d", "default_socket_timeout=-1"];
+    if (phpOverride) {
+      if (!fs.existsSync(phpOverride)) {
+        throw new Error(
+          `Manual PHP path does not exist: ${phpOverride} (set in Settings → Manual CLI setup — remove it or fix the path)`
+        );
+      }
+      logBackendOnce(
+        `override:${phpOverride}:${phar}`,
+        `[backend] using manual PHP override ${phpOverride} with PHAR ${phar}`
+      );
+      return { cmd: phpOverride, prefixArgs: [...phpIniArgs, phar] };
+    }
     const php = phpPath();
     if (!fs.existsSync(php)) {
       const sysPhp = findSystemPhp();
@@ -620,7 +745,7 @@ function resolveBackend() {
       // Surface a real error so check_backend / the CLI-missing modal can act.
       if (app.isPackaged) {
         const err = new Error(
-          `PHP interpreter not found. Tried bundled PHP at ${php} and system PHP on PATH. The app installation may be incomplete.`
+          `PHP interpreter not found. Tried bundled PHP at ${php} and system PHP on PATH. Set a manual PHP path in Settings → Manual CLI setup.`
         );
         console.error("[backend]", String(err));
         throw err;
@@ -1126,28 +1251,56 @@ ipcMain.handle("check_backend", async () => {
   if (process.env.KRPANOCODE_DEV_MOCK || process.env.KRPANOCODE_DEV === "1") {
     return { ...result, ok: true, isMock: true };
   }
-  // PHAR: present in userData, bundled, or seedable from the source repo?
-  let phar = null;
-  try {
-    phar = ensurePharReady();
-  } catch {
-    phar = null;
+  const prefs = loadPreferences();
+  const phpOverride =
+    typeof prefs.cliPhpOverride === "string" && prefs.cliPhpOverride.trim()
+      ? prefs.cliPhpOverride.trim()
+      : null;
+  const pharOverride =
+    typeof prefs.cliPharOverride === "string" && prefs.cliPharOverride.trim()
+      ? prefs.cliPharOverride.trim()
+      : null;
+  // PHAR: manual override, present in userData, bundled, or source repo?
+  let phar = pharOverride;
+  if (phar && !fs.existsSync(phar)) {
+    result.reason = "no_phar";
+    result.pharPath = phar;
+    return result;
+  }
+  if (!phar) {
+    try {
+      phar = ensurePharReady();
+    } catch {
+      phar = null;
+    }
   }
   if (!phar) {
     result.reason = "no_phar";
     return result;
   }
   result.pharPath = phar;
-  // PHP: bundled first, system fallback second.
-  const bundled = phpPath();
-  if (fs.existsSync(bundled)) {
-    result.phpPath = bundled;
-    result.phpSource = "bundled";
-  } else {
-    const sys = findSystemPhp();
-    if (sys) {
-      result.phpPath = sys;
-      result.phpSource = "system";
+  // PHP: manual override, bundled, or system fallback.
+  if (phpOverride) {
+    if (fs.existsSync(phpOverride)) {
+      result.phpPath = phpOverride;
+      result.phpSource = "manual";
+    } else {
+      result.reason = "no_php";
+      result.phpPath = phpOverride;
+      return result;
+    }
+  }
+  if (!result.phpPath) {
+    const bundled = phpPath();
+    if (fs.existsSync(bundled)) {
+      result.phpPath = bundled;
+      result.phpSource = "bundled";
+    } else {
+      const sys = findSystemPhp();
+      if (sys) {
+        result.phpPath = sys;
+        result.phpSource = "system";
+      }
     }
   }
   if (!result.phpPath) {
@@ -1320,6 +1473,30 @@ ipcMain.handle("get_preview_url", async () => {
 ipcMain.handle("pick_folder", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ["openDirectory"],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
+// Single-file picker for Settings → Manual CLI setup.
+// kind "php" filters executables (.exe on Windows, no filter elsewhere),
+// kind "phar" filters .phar files.
+ipcMain.handle("pick_file", async (_evt, kind) => {
+  const filters =
+    kind === "phar"
+      ? [
+          { name: "krpanocode CLI (PHAR)", extensions: ["phar"] },
+          { name: "All files", extensions: ["*"] },
+        ]
+      : process.platform === "win32"
+        ? [
+            { name: "PHP interpreter", extensions: ["exe"] },
+            { name: "All files", extensions: ["*"] },
+          ]
+        : [{ name: "All files", extensions: ["*"] }];
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile"],
+    filters,
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   return result.filePaths[0];
