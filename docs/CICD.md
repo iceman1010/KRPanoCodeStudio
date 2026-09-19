@@ -66,6 +66,7 @@ Needed for `softprops/action-gh-release@v2` to create releases and upload assets
 - Target: `NSIS` installer (.exe)
 - Command: `npm run package:win` → `electron-builder --win --publish never`
 - Shell: `bash` for download scripts (Git Bash on Windows)
+- PHP: no `setup-php` — the job bundles a pinned static php.exe (see "Bundled Runtime")
 - Artifact: `windows-release` (contains `*.exe`)
 
 ## Dependency Installation
@@ -88,11 +89,37 @@ The Electron app bundles PHP and the `krpanocode.phar` backend. Both are downloa
 - Verifies it's a valid PHAR (checks for `<?php` or `Phar` magic bytes)
 
 ### PHP Download (`scripts/download-php.sh <os>`)
-- Uses PHP already installed by `shivammathur/setup-php`
-- Copies to `resources/php/` preserving layout:
-  - Linux/macOS: `resources/php/bin/php` + `lib/` + `php.ini`
-  - Windows: `resources/php/bin/php.exe` + `ext/` + `php.ini`
-- Verifies `php --version`
+Two different strategies per platform:
+
+**Linux/macOS** — copies the PHP installed by `shivammathur/setup-php` on the runner:
+- `resources/php/bin/php` + `ext/` (shared extension dir)
+
+**Windows** — downloads a **pinned, statically-linked php.exe** (single self-contained
+file, no DLLs, no VC++ Redistributable, no `ext/`, no `php.ini`):
+- Source: `NativePHP/php-bin` (static-php-cli builds, PHP license redistribution)
+- Pin: git commit `e0c212d…` (raw.githubusercontent URLs are byte-immutable) +
+  sha256 of the zip, both at the top of `scripts/download-php.sh`
+- Lands at `resources/php/bin/php.exe` — same path `phpPath()` in `main/index.cjs`
+  expects, so the app itself needed no change
+- CI guardrails (fail the build loudly instead of shipping broken):
+  - sha256 of the downloaded zip must match the pin
+  - `php.exe -v` must report PHP 8.3
+  - `php.exe -n -m` must contain `curl, mbstring, openssl, zip, fileinfo, phar`
+  - PHAR smoke test: `php.exe -n resources/krpanocode.phar --json --version`
+
+**Why static on Windows?** The official windows.php.net `php.exe` is a 143 KB stub
+that imports `php8.dll` (the real interpreter), `VCRUNTIME140.dll`, and ~20 support
+DLLs from its own directory. The old script copied only `php.exe` — a bundle that
+could not start on end-user machines (missing `php8.dll` → exit `0xC0000135`, or a
+foreign `php8.dll` resolved from PATH → exit `0xC0000005`, the access-violation
+crash seen in the wild). The CI verify step used to pass anyway because setup-php's
+`C:\tools\php` was on the runner PATH, masking the breakage.
+
+### Upgrading the Windows PHP pin
+1. Pick a newer commit in `NativePHP/php-bin` that still ships `bin/win/x64/php-8.3.zip`
+2. Download the zip, review it, compute its sha256
+3. Update `NATIVEPHP_COMMIT` + `NATIVEPHP_ZIP_SHA256` in `scripts/download-php.sh`
+4. Run `bash scripts/download-php.sh windows` on a Windows machine (or let CI verify)
 
 ### Why Not Commit Binaries?
 - Repo stays small (~1MB vs ~7MB)
@@ -151,7 +178,7 @@ Release name/tag: `v0.2.2`, `v0.2.3`, etc.
 ## Local Development vs CI
 | Aspect | Local Dev | CI |
 |--------|-----------|-----|
-| PHP | System PHP (`/usr/bin/php`) via fallback | Bundled from `shivammathur/setup-php` |
+| PHP | System PHP (`/usr/bin/php`) via fallback | Linux/mac: bundled from `shivammathur/setup-php`; Windows: pinned static exe from `NativePHP/php-bin` |
 | PHAR | Seeded from `../KRPano_LLM_code/krpanocode.phar` | Downloaded fresh from releases repo |
 | Packaging | `npm run package:linux` works if resources/ exist | Resources created by download scripts |
 
@@ -206,7 +233,9 @@ If you pushed without version bump, `version-check` outputs `changed=false` and 
 3. Add artifact upload + include in `create-release` needs/files
 
 ### Change PHP version
-Update `shivammathur/setup-php@v2` `php-version` in all three build jobs.
+- Linux/macOS: update `shivammathur/setup-php@v2` `php-version` in the linux and macos-build jobs.
+- Windows: update the `NATIVEPHP_*` pin in `scripts/download-php.sh` (and the
+  `PHP 8.3` assertion) — see "Upgrading the Windows PHP pin" above.
 
 ### Change PHAR source
 Edit `scripts/download-phar.sh` `RELEASES_LATEST_URL` and `REPO` variables.

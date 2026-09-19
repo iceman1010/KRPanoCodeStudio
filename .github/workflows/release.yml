@@ -130,10 +130,8 @@ jobs:
         with:
           node-version: 22
 
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.2"
-          extensions: mbstring, curl, openssl, posix, pcntl, zip, fileinfo
+      # No setup-php here: Windows bundles a pinned static php.exe downloaded
+      # and self-verified by scripts/download-php.sh (see docs/CICD.md).
 
       - name: Install dependencies
         run: npm ci
