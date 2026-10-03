@@ -109,13 +109,16 @@ function disarmIdleTimer() {
 }
 
 // Fire an idle-timeout notification to the renderer and record how to abort /
-// extend this run. `scope` is shown in the modal; `onAbort`/`onExtend` are
-// called from the `respond_idle_timeout` IPC handler.
-function notifyIdleTimeout(scope, onAbort, onExtend) {
+// extend / retry this run. `scope` is shown in the modal; `onAbort`/`onExtend`
+// are always provided; `onRetry` is only provided by prompt-edit runs (the
+// "edit" scope) — other scopes (setup/models/version/update) have no
+// re-issuable "last request", so the modal hides the Retry button for them.
+// All three are called from the `respond_idle_timeout` IPC handler.
+function notifyIdleTimeout(scope, onAbort, onExtend, onRetry) {
   // If a previous prompt is outstanding (shouldn't happen, but be safe),
   // auto-abort it so the new one takes over cleanly.
   if (pendingIdle && pendingIdle.onAbort) pendingIdle.onAbort();
-  pendingIdle = { scope, onAbort, onExtend };
+  pendingIdle = { scope, onAbort, onExtend, onRetry };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("cli-idle-timeout", { scope });
   } else {
@@ -132,6 +135,14 @@ ipcMain.handle("respond_idle_timeout", async (_evt, payload) => {
   if (!p) return;
   if (action === "extend") {
     if (typeof p.onExtend === "function") p.onExtend();
+  } else if (action === "retry") {
+    // Retry kills this child WITHOUT surfacing an error (the run is not a
+    // failure — we're re-issuing it). The renderer follows up with a fresh
+    // send_prompt for the same intent. Scopes without an onRetry (setup,
+    // models, …) fall through to abort — the modal only offers Retry for
+    // the "edit" scope, so this is just a belt-and-braces guard.
+    if (typeof p.onRetry === "function") p.onRetry();
+    else if (typeof p.onAbort === "function") p.onAbort();
   } else {
     // "abort" or anything else
     if (typeof p.onAbort === "function") p.onAbort();
@@ -809,8 +820,10 @@ function spawnPhar(args) {
     let lastErrorEvent = null;
 
     // Idle-timeout handlers for THIS child. Abort kills + surfaces an error;
-    // Extend just re-arms the timer and lets the child keep running. Both clear
-    // the pendingIdle slot.
+    // Extend just re-arms the timer and lets the child keep running; Retry
+    // kills silently (no error event) so the renderer can immediately re-issue
+    // the same prompt — the finalize() __stream_end__ resets its phase to a
+    // clean pre-run state. All three clear the pendingIdle slot.
     const onIdleFire = () => {
       notifyIdleTimeout(
         "edit",
@@ -827,6 +840,16 @@ function spawnPhar(args) {
         () => {
           // extend — re-arm and continue
           armIdleTimer(onIdleFire);
+        },
+        () => {
+          // retry — kill this child without an error event. Safe with respect
+          // to tour files: the CLI commits edits (backup + write) only AFTER
+          // the last network response, so a socket-idle child hasn't touched
+          // anything on disk yet. The renderer's follow-up send_prompt spawns
+          // a fresh PHAR (its killCurrentChild() also guards this race).
+          inClarify = false;
+          try { child.kill(); } catch {}
+          finalize();
         },
       );
     };

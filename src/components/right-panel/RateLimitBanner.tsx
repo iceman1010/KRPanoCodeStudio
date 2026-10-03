@@ -26,6 +26,8 @@ export function RateLimitBanner() {
   const beginRun = useAppStore((s) => s.beginRun);
   const endRun = useAppStore((s) => s.endRun);
 
+  const selectedModel = useAppStore((s) => s.selectedModel);
+
   const [remaining, setRemaining] = useState<number | null>(null);
   const [retrying, setRetrying] = useState(false);
 
@@ -52,7 +54,16 @@ export function RateLimitBanner() {
     clearActivity();
     beginRun();
     try {
-      await invoke("send_prompt", lastPrompt, lastClarify);
+      // Options-object form (like PromptBox/ResumeBanner). This call site
+      // still used the pre-refactor positional form `invoke("send_prompt",
+      // lastPrompt, lastClarify)` — the handler destructured the prompt
+      // STRING, every field came out undefined, and the PHAR was literally
+      // spawned with `-p undefined`. Fixed to send the real prompt again.
+      await invoke("send_prompt", {
+        prompt: lastPrompt,
+        clarify: lastClarify,
+        model: selectedModel,
+      });
     } catch (err) {
       endRun("idle");
       toast.error(err instanceof Error ? err.message : String(err));
